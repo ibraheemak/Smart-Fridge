@@ -1,0 +1,39 @@
+# Smart Fridge ESP32-CAM
+# Git ignore file for sensitive credentials
+
+# Credentials - NEVER commit these!
+SECRETS.h
+
+# Arduino build artifacts
+build/
+*.o
+*.a
+*.so
+*.elf
+*.bin
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Compiled binaries
+*.hex
+
+# Dependencies
+node_modules/
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
