@@ -58,6 +58,7 @@
 #define CAMERA_XCLK_FREQ 5000000    // XClk frequency reduced to 5MHz (5000000Hz) to avoid LEDC timer conflicts
 #define CAMERA_LEDC_CHANNEL 1        // Use LEDC_CHANNEL_1 instead of CHANNEL_0 to avoid conflicts
 #define FLASH_DURATION_MS 600       // Time (ms) for AEC to converge after flushing pre-flash frames
+#define FLASH_PWM_DUTY      80      // Flash brightness: 0 (off) – 255 (full). 80 ≈ 31%
 #define CAPTURE_INTERVAL_MS 30000   // Interval between captures (30 seconds)
 #define CAMERA_WARMUP_DELAY_MS 500  // Warmup delay before actual capture
 
@@ -82,6 +83,22 @@
 // FIREBASE SETTINGS
 // ============================================================================
 #define FIREBASE_REQUEST_TIMEOUT_MS 15000  // Firebase request timeout
+
+// ============================================================================
+// TIMEZONE SETTINGS
+// ============================================================================
+// POSIX timezone string — controls local time for timestamps and document IDs.
+// Israel: "IST-2IDT,M3.4.4/26,M10.5.0"  (UTC+2, DST UTC+3)
+// UTC:    "UTC0"
+#define TIMEZONE "IST-2IDT,M3.4.4/26,M10.5.0"
+
+// ============================================================================
+// LED STRIP SETTINGS (WS2811B addressable)
+// ============================================================================
+// GPIO 14 is free on AI Thinker ESP32-CAM (not used by camera or critical boot path)
+#define LED_DATA_PIN    14
+#define LED_NUM_LEDS    4    
+#define LED_BRIGHTNESS  200   // 0-255
 
 
 

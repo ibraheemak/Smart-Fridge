@@ -3,6 +3,7 @@
 
 # Credentials - NEVER commit these!
 SECRETS.h
+SmartFridge_ESP32_CAM/SECRETS.h
 
 # Arduino build artifacts
 build/

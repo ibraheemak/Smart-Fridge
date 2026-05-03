@@ -13,6 +13,7 @@
 #include "mbedtls/base64.h"
 #include "SECRETS.h"
 #include "parameters.h"
+#include "led_strip.h"
 
 // ============================================================================
 // GLOBALS FOR LATEST JPEG & WEB SERVER
@@ -148,15 +149,19 @@ void initCamera() {
 // ============================================================================
 // CAMERA FLASH CONTROL
 // ============================================================================
+void initFlash() {
+  ledcAttach(FLASH_GPIO_NUM, 50000, 8);  // 50 kHz — above camera line-scan, prevents banding
+  ledcWrite(FLASH_GPIO_NUM, 0);
+}
+
 void turnOnFlash() {
-  Serial.println("[FLASH] Turning on flash");
-  pinMode(FLASH_GPIO_NUM, OUTPUT);
-  digitalWrite(FLASH_GPIO_NUM, HIGH);
+  Serial.printf("[FLASH] Turning on flash (duty %d/255)\n", FLASH_PWM_DUTY);
+  ledcWrite(FLASH_GPIO_NUM, FLASH_PWM_DUTY);
 }
 
 void turnOffFlash() {
   Serial.println("[FLASH] Turning off flash");
-  digitalWrite(FLASH_GPIO_NUM, LOW);
+  ledcWrite(FLASH_GPIO_NUM, 0);
 }
 
 // ============================================================================
@@ -394,12 +399,44 @@ bool parseGeminiResponse(String response, JsonDocument& detected_items) {
 // ============================================================================
 // FIREBASE INTEGRATION
 // ============================================================================
+
+// Human-readable local timestamp: "2024-05-15 14:30:00"
 String getFormattedTimestamp() {
   time_t now = time(nullptr);
-  struct tm* timeinfo = localtime(&now);
-  char buffer[30];
-  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
-  return String(buffer);
+  struct tm* t = localtime(&now);
+  char buf[20];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", t);
+  return String(buf);
+}
+
+// Document-safe ISO timestamp (no colons): "2024-05-15T14-30-00"
+String getISOTimestamp() {
+  time_t now = time(nullptr);
+  struct tm* t = localtime(&now);
+  char buf[20];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H-%M-%S", t);
+  return String(buf);
+}
+
+// Week-of-month ID: "2024-05-W1" … "2024-05-W5"
+// Days 1-7 = W1, 8-14 = W2, 15-21 = W3, 22-28 = W4, 29-31 = W5
+String getWeekId() {
+  time_t now = time(nullptr);
+  struct tm* t = localtime(&now);
+  int weekOfMonth = (t->tm_mday - 1) / 7 + 1;
+  char buf[14];
+  snprintf(buf, sizeof(buf), "%04d-%02d-W%d",
+           t->tm_year + 1900, t->tm_mon + 1, weekOfMonth);
+  return String(buf);
+}
+
+// Month ID: "2024-05"
+String getMonthId() {
+  time_t now = time(nullptr);
+  struct tm* t = localtime(&now);
+  char buf[8];
+  strftime(buf, sizeof(buf), "%Y-%m", t);
+  return String(buf);
 }
 
 // Fetch the canonical product list from Firestore basic-items/basic-items
@@ -499,6 +536,59 @@ bool saveToFirebase(JsonDocument& items_doc) {
 }
 
 // ============================================================================
+// SCAN HISTORY — one new Firestore document per scan
+// ============================================================================
+
+// Saves this scan to fridges/{id}/scans/{timestamp} (new document every scan).
+bool saveScanHistory(JsonDocument& items_doc) {
+  if (!items_doc.containsKey("items")) return false;
+
+  String ts     = getFormattedTimestamp();
+  String scanId = getISOTimestamp();
+  String weekId = getWeekId();
+  String monthId = getMonthId();
+
+  DynamicJsonDocument doc(6144);
+  JsonObject fields = doc.createNestedObject("fields");
+  fields["timestamp"]["stringValue"] = ts;
+  fields["weekId"]["stringValue"]    = weekId;
+  fields["monthId"]["stringValue"]   = monthId;
+  fields["source"]["stringValue"]    = "ESP32-CAM";
+
+  JsonArray values = fields["items"]["arrayValue"].createNestedArray("values");
+  for (JsonObject item : items_doc["items"].as<JsonArray>()) {
+    JsonObject entry   = values.createNestedObject();
+    JsonObject mfields = entry["mapValue"].createNestedObject("fields");
+    mfields["name"]["stringValue"]       = item["name"].as<String>();
+    mfields["quantity"]["stringValue"]   = item["quantity"].as<String>();
+    mfields["confidence"]["stringValue"] = item["confidence"].as<String>();
+  }
+
+  String payload;
+  serializeJson(doc, payload);
+  doc.clear();
+
+  String url = String("https://firestore.googleapis.com/v1/projects/") +
+               FIREBASE_PROJECT_ID +
+               "/databases/(default)/documents/fridges/" +
+               FRIDGE_ID + "/scans/" + scanId +
+               "?key=" + FIREBASE_API_KEY;
+
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.PATCH(payload);
+  http.end();
+
+  if (code == 200 || code == 201) {
+    Serial.printf("[HISTORY] scans/%s saved\n", scanId.c_str());
+    return true;
+  }
+  Serial.printf("[HISTORY] scans save failed: %d\n", code);
+  return false;
+}
+
+// ============================================================================
 // WIFI CONNECTION
 // ============================================================================
 void connectToWiFi() {
@@ -531,7 +621,7 @@ void connectToWiFi() {
 // ============================================================================
 void configureTime() {
   Serial.println("[TIME] Configuring time with NTP server...");
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  configTzTime(TIMEZONE, "pool.ntp.org", "time.nist.gov");
   
   time_t now = time(nullptr);
   while (now < 24 * 3600) {
@@ -550,12 +640,17 @@ void configureTime() {
 // ============================================================================
 void captureAndProcessImage() {
   Serial.println("\n[MAIN] Starting capture and process cycle...");
-  
-  // Capture photo
+  ledStripOn();
+  // WS2811 LEDs latch their color after show() — RMT goes idle ~1ms later.
+  // A short pause ensures RMT is silent before the camera reads its data bus.
+  delay(20);
+
   size_t photo_size = 0;
   uint8_t* photo_data = capturePhoto(&photo_size, true);
+
   if (!photo_data) {
     Serial.println("[MAIN] Failed to capture photo");
+    ledStripOff();
     return;
   }
   
@@ -599,12 +694,17 @@ void captureAndProcessImage() {
   // Print URL for latest image
   Serial.printf("[MAIN] Latest image available at: http://%s/latest.jpg\n", WiFi.localIP().toString().c_str());
 
-  // Save to Firebase
-  if (saveToFirebase(detected_items)) {
+  // Save current inventory snapshot
+  saveToFirebase(detected_items);
+
+  // Save per-scan history + append to weekly/monthly accumulation docs
+  if (saveScanHistory(detected_items)) {
     Serial.println("[MAIN] Cycle completed successfully!");
   } else {
-    Serial.println("[MAIN] Failed to save to Firebase");
+    Serial.println("[MAIN] Cycle done (some history saves may have failed — check serial)");
   }
+
+  ledStripOff();
 }
 
 // ============================================================================
@@ -615,6 +715,8 @@ void printHelp() {
   Serial.println("Smart Fridge ESP32-CAM - Available Commands");
   Serial.println("========================================");
   Serial.println("SCAN   - Capture image, send to Gemini, save to Firestore");
+  Serial.println("LED ON  - Turn LED strip on (test)");
+  Serial.println("LED OFF - Turn LED strip off (test)");
   Serial.println("HELP   - Show this help menu");
   Serial.println("STATUS - Show system status");
   Serial.println("========================================\n");
@@ -630,6 +732,14 @@ void processSerialCommand(String command) {
   if (command == "SCAN") {
     Serial.println("[COMMAND] SCAN received - Starting capture cycle...");
     captureAndProcessImage();
+  }
+  else if (command == "LED ON") {
+    Serial.println("[COMMAND] LED ON");
+    ledStripOn();
+  }
+  else if (command == "LED OFF") {
+    Serial.println("[COMMAND] LED OFF");
+    ledStripOff();
   }
   else if (command == "HELP") {
     printHelp();
@@ -666,8 +776,14 @@ void setup() {
   // Configure time
   configureTime();
   
+  // Initialize flash PWM before camera so the pin is configured
+  initFlash();
+
   // Initialize camera
   initCamera();
+
+  // Initialize LED strip
+  initLEDStrip();
   
   Serial.println("\n[SETUP] All systems initialized. Ready for commands.");
   printHelp();
