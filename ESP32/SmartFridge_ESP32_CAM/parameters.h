@@ -72,6 +72,12 @@
 #define WIFI_MAX_ATTEMPTS 20        // Maximum WiFi connection attempts
 #define WIFI_TIMEOUT_MS 10000       // WiFi connection timeout
 
+// WiFiManager captive-portal settings
+#define WIFI_AP_NAME          "SmartFridge_Setup"  // AP name shown during setup
+#define WIFI_PORTAL_TIMEOUT_S 180                  // Seconds before portal gives up and restarts
+#define RESET_BUTTON_PIN      0                    // GPIO 0 = BOOT button (hold at power-on to wipe credentials)
+#define RESET_HOLD_MS         3000                 // How long to hold the button to trigger a wipe
+
 // ============================================================================
 // GEMINI API SETTINGS
 // ============================================================================

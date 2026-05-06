@@ -6,6 +6,7 @@
 
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <WiFiManager.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "time.h"
@@ -589,31 +590,71 @@ bool saveScanHistory(JsonDocument& items_doc) {
 }
 
 // ============================================================================
-// WIFI CONNECTION
+// WIFI — credentials managed by WiFiManager (stored in ESP32 flash)
 // ============================================================================
-void connectToWiFi() {
-  Serial.println("\n[WIFI] Starting WiFi connection...");
-  Serial.printf("[WIFI] Connecting to: %s\n", WIFI_SSID);
-  
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < WIFI_MAX_ATTEMPTS) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
+
+// Call once at the very start of setup().
+// If the BOOT button (GPIO 0) is held for RESET_HOLD_MS ms, saved credentials
+// are wiped and the device restarts into captive-portal mode.
+void checkResetButton() {
+  pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
+  if (digitalRead(RESET_BUTTON_PIN) != LOW) return;
+
+  Serial.println("[WIFI] BOOT button held — keep holding to wipe WiFi credentials...");
+  unsigned long pressStart = millis();
+  while (digitalRead(RESET_BUTTON_PIN) == LOW) {
+    if (millis() - pressStart >= RESET_HOLD_MS) {
+      Serial.println("[WIFI] Wiping saved WiFi credentials...");
+      WiFiManager wm;
+      wm.resetSettings();
+      Serial.println("[WIFI] Done. Restarting into setup portal...");
+      delay(1000);
+      ESP.restart();
+    }
+    delay(50);
   }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[WIFI] Connected successfully!");
-    Serial.printf("[WIFI] IP address: %s\n", WiFi.localIP().toString().c_str());
-    Serial.printf("[WIFI] RSSI: %d dBm\n", WiFi.RSSI());
-  } else {
-    Serial.println("\n[WIFI] Failed to connect!");
-    delay(2000);
+  Serial.println("[WIFI] Short press — ignored");
+}
+
+// Wipe credentials and restart — callable from serial command.
+void wipeWiFiCredentials() {
+  Serial.println("[WIFI] Wiping saved WiFi credentials...");
+  WiFiManager wm;
+  wm.resetSettings();
+  Serial.println("[WIFI] Restarting into setup portal...");
+  delay(1000);
+  ESP.restart();
+}
+
+// On first boot (or after a reset) this opens an AP + captive portal so the
+// user can enter SSID/password.  On subsequent boots it connects automatically
+// using the credentials stored in flash.  Times out after WIFI_PORTAL_TIMEOUT_S
+// seconds if no one configures it, then restarts.
+void initWiFi() {
+  Serial.println("\n[WIFI] Starting WiFiManager...");
+
+  WiFiManager wm;
+  wm.setConnectTimeout(20);
+  wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
+
+  // Callback fires when the portal opens so the user knows what to do.
+  wm.setAPCallback([](WiFiManager* wm) {
+    Serial.println("[WIFI] No saved credentials found.");
+    Serial.printf("[WIFI] Connect to AP \"%s\" and open http://192.168.4.1\n", WIFI_AP_NAME);
+  });
+
+  bool connected = wm.autoConnect(WIFI_AP_NAME);
+
+  if (!connected) {
+    Serial.println("[WIFI] Portal timed out without a connection. Restarting...");
+    delay(3000);
     ESP.restart();
   }
+
+  Serial.println("[WIFI] Connected!");
+  Serial.printf("[WIFI] SSID: %s\n", WiFi.SSID().c_str());
+  Serial.printf("[WIFI] IP:   %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("[WIFI] RSSI: %d dBm\n", WiFi.RSSI());
 }
 
 // ============================================================================
@@ -714,11 +755,12 @@ void printHelp() {
   Serial.println("\n========================================");
   Serial.println("Smart Fridge ESP32-CAM - Available Commands");
   Serial.println("========================================");
-  Serial.println("SCAN   - Capture image, send to Gemini, save to Firestore");
-  Serial.println("LED ON  - Turn LED strip on (test)");
-  Serial.println("LED OFF - Turn LED strip off (test)");
-  Serial.println("HELP   - Show this help menu");
-  Serial.println("STATUS - Show system status");
+  Serial.println("SCAN       - Capture image, send to Gemini, save to Firestore");
+  Serial.println("LED ON     - Turn LED strip on (test)");
+  Serial.println("LED OFF    - Turn LED strip off (test)");
+  Serial.println("WIFIRESET  - Wipe saved WiFi credentials and open setup portal");
+  Serial.println("HELP       - Show this help menu");
+  Serial.println("STATUS     - Show system status");
   Serial.println("========================================\n");
 }
 
@@ -744,11 +786,15 @@ void processSerialCommand(String command) {
   else if (command == "HELP") {
     printHelp();
   }
+  else if (command == "WIFIRESET") {
+    wipeWiFiCredentials();
+  }
   else if (command == "STATUS") {
     Serial.println("\n[STATUS] System Status:");
     Serial.printf("[STATUS] WiFi Status: %s\n", WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("[STATUS] IP Address: %s\n", WiFi.localIP().toString().c_str());
+      Serial.printf("[STATUS] SSID:            %s\n", WiFi.SSID().c_str());
+      Serial.printf("[STATUS] IP Address:      %s\n", WiFi.localIP().toString().c_str());
       Serial.printf("[STATUS] Signal Strength: %d dBm\n", WiFi.RSSI());
     }
     Serial.println();
@@ -770,8 +816,11 @@ void setup() {
   Serial.println("Smart Fridge ESP32-CAM Starting Up");
   Serial.println("========================================\n");
   
-  // Connect to WiFi
-  connectToWiFi();
+  // Wipe credentials if BOOT button held at power-on
+  checkResetButton();
+
+  // Connect via WiFiManager (opens captive portal on first boot)
+  initWiFi();
   
   // Configure time
   configureTime();
@@ -798,10 +847,11 @@ void setup() {
 // LOOP
 // ============================================================================
 void loop() {
-  // Check WiFi connection
+  // Check WiFi connection — restart so WiFiManager can reconnect or re-open portal
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[LOOP] WiFi disconnected. Attempting to reconnect...");
-    connectToWiFi();
+    Serial.println("[LOOP] WiFi disconnected. Restarting to reconnect...");
+    delay(3000);
+    ESP.restart();
   }
 
   // Handle web server
