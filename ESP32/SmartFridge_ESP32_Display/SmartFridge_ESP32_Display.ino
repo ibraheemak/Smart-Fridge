@@ -134,7 +134,9 @@ void resampleAreaRGB565(const uint16_t* src, int sw, int sh,
       for (int y = iy0; y < iy1; y++) {
         const uint16_t* row = src + (long)y * sw;
         for (int x = ix0; x < ix1; x++) {
+          // TJpgDec.setSwapBytes(true) produces big-endian RGB565; un-swap before extracting channels
           uint16_t p = row[x];
+          p = (p >> 8) | (p << 8);
           sR += (p >> 11) & 0x1F;
           sG += (p >> 5)  & 0x3F;
           sB +=  p        & 0x1F;
@@ -144,7 +146,8 @@ void resampleAreaRGB565(const uint16_t* src, int sw, int sh,
       uint16_t R = (uint16_t)(sR / n);
       uint16_t G = (uint16_t)(sG / n);
       uint16_t B = (uint16_t)(sB / n);
-      dst[(long)dy * dw + dx] = (R << 11) | (G << 5) | B;
+      uint16_t out = (R << 11) | (G << 5) | B;
+      dst[(long)dy * dw + dx] = (out >> 8) | (out << 8);  // re-swap for pushImage
     }
   }
 }
@@ -188,20 +191,24 @@ bool fetchIconJpeg(const String& item_name, uint8_t** out_buf, size_t* out_len) 
   if (!http.begin(client, url)) return false;
 
   int code = http.GET();
+  Serial.printf("[ICON] %s HTTP %d\n", item_name.c_str(), code);
   if (code != 200) {
-    Serial.printf("[ICON] %s -> %d\n", item_name.c_str(), code);
     http.end();
     return false;
   }
 
   int len = http.getSize();
-  if (len <= 0 || len > 256 * 1024) {   // sanity cap — allow large hi-res icons
+  Serial.printf("[ICON] %s Content-Length: %d\n", item_name.c_str(), len);
+  // len == -1 when server uses chunked transfer (no Content-Length); cap at 256 KB
+  const int MAX_ICON_BYTES = 256 * 1024;
+  if (len > MAX_ICON_BYTES) {
     Serial.printf("[ICON] %s bad size %d\n", item_name.c_str(), len);
     http.end();
     return false;
   }
 
-  uint8_t* buf = (uint8_t*) malloc(len);
+  int buf_size = (len > 0) ? len : MAX_ICON_BYTES;
+  uint8_t* buf = (uint8_t*) malloc(buf_size);
   if (!buf) {
     http.end();
     return false;
@@ -210,20 +217,37 @@ bool fetchIconJpeg(const String& item_name, uint8_t** out_buf, size_t* out_len) 
   WiFiClient* stream = http.getStreamPtr();
   int read = 0;
   unsigned long t0 = millis();
-  while (http.connected() && read < len && millis() - t0 < 8000) {
+  int target = (len > 0) ? len : buf_size;
+  while (http.connected() && read < target && millis() - t0 < 8000) {
     size_t avail = stream->available();
     if (avail) {
-      int n = stream->readBytes(buf + read, min((int)avail, len - read));
+      int n = stream->readBytes(buf + read, min((int)avail, target - read));
       if (n <= 0) break;
       read += n;
+      if (len < 0 && !http.connected()) break;  // chunked: stop at stream end
     } else {
       delay(2);
     }
   }
   http.end();
 
-  if (read != len) {
+  if (len > 0 && read != len) {
     Serial.printf("[ICON] %s short read %d/%d\n", item_name.c_str(), read, len);
+    free(buf);
+    return false;
+  }
+  if (read == 0) {
+    free(buf);
+    return false;
+  }
+
+  Serial.printf("[ICON] %s read %d bytes, first bytes: %02X %02X %02X %02X\n",
+                item_name.c_str(), read,
+                read > 0 ? buf[0] : 0, read > 1 ? buf[1] : 0,
+                read > 2 ? buf[2] : 0, read > 3 ? buf[3] : 0);
+
+  if (read < 2 || buf[0] != 0xFF || buf[1] != 0xD8) {
+    Serial.printf("[ICON] %s: not a JPEG (expected FF D8)\n", item_name.c_str());
     free(buf);
     return false;
   }
@@ -248,10 +272,17 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
   }
 
   uint16_t jw = 0, jh = 0;
-  if (TJpgDec.getJpgSize(&jw, &jh, jbuf, jlen) != 0 || jw == 0 || jh == 0) {
-    Serial.printf("[ICON] %s: getJpgSize failed (bad JPEG?)\n", name.c_str());
+  int szrc = TJpgDec.getJpgSize(&jw, &jh, jbuf, jlen);
+  if (szrc != 0 || jw == 0 || jh == 0) {
+    // szrc codes: 3=JDR_MEM1 (out of heap), 6=JDR_FMT1 (bad format),
+    //             8=JDR_FMT3 (progressive JPEG — not supported by TJpgDec)
+    Serial.printf("[ICON] %s: getJpgSize rc=%d, trying direct draw fallback\n", name.c_str(), szrc);
+    TJpgDec.setJpgScale(1);
+    TJpgDec.setCallback(tftJpgOutput);
+    int drc = TJpgDec.drawJpg(x, y, jbuf, jlen);
+    Serial.printf("[ICON] %s: direct draw rc=%d\n", name.c_str(), drc);
     free(jbuf);
-    tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_RED);
+    if (drc != 0) tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_RED);
     return;
   }
   Serial.printf("[ICON] %s native %ux%u\n", name.c_str(), jw, jh);
@@ -544,6 +575,7 @@ void setup() {
   tft.init();
   tft.setRotation(DISPLAY_ROTATION);
   tft.fillScreen(TFT_BLACK);
+  TJpgDec.setSwapBytes(true);  // required for TFT_eSPI pushImage on ESP32
 
   showStatus("Smart Fridge", "Booting...");
 
