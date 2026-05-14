@@ -570,6 +570,14 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n[BOOT] SmartFridge Display starting");
+  Serial.printf("[TFT] MOSI=%d SCLK=%d CS=%d DC=%d RST=%d Bus=%s\n",
+                TFT_MOSI, TFT_SCLK, TFT_CS, TFT_DC, TFT_RST,
+#ifdef USE_HSPI_PORT
+                "HSPI"
+#else
+                "VSPI"
+#endif
+                );
 
   backlightOn();
   tft.init();

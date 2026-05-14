@@ -1,5 +1,5 @@
 // ============================================================================
-// SmartFridge ESP32 + ILI9488 Display — user parameters
+// SmartFridge ESP32-CAM + ILI9488 Display — user parameters
 // ============================================================================
 //
 // This sketch is a *companion* to SmartFridge_ESP32_CAM. The CAM device
@@ -13,20 +13,26 @@
 // ----------------------------------
 // TFT_eSPI is configured via its own User_Setup.h file (inside the library
 // folder), NOT via #defines here. After installing TFT_eSPI in the Arduino
-// IDE, edit:
-//     <Arduino libs>/TFT_eSPI/User_Setup_Select.h
-// and uncomment a setup that matches: ILI9488 + ESP32 + your wiring.
+// IDE, open:
+//     <Arduino libs>/TFT_eSPI/User_Setup.h
+// and set the following in User_Setup.h:
+//   #define TFT_MOSI  13
+//   #define TFT_SCLK  14
+//   #define TFT_CS    15
+//   #define TFT_DC    12   // GPIO 12 floats LOW at boot — safe as DC pin
+//   #define TFT_RST   -1   // RST tied to 3.3V (GPIO 12 is a strapping pin — avoid)
+//   // USE_HSPI_PORT — leave commented out (VSPI with GPIO matrix remapping)
+//   // TFT_MISO — leave undefined (not connected)
 //
-// Wiring used by this project (ESP32 ↔ ILI9488, VSPI):
-//   Display pin     ESP32 GPIO   Function
-//   ----------      ----------   --------
-//   SDI / MOSI  ->  GPIO 23      MOSI (data to display)
-//   SCK         ->  GPIO 18      SCK  (clock)
-//   CS          ->  GPIO 15      CS   (chip select)
-//   RESET       ->  GPIO  4      RST
-//   DC / RS     ->  GPIO  2      DC   (data/command)
-//   SDO / MISO  ->  GPIO 19      MISO (optional)
-//   VCC + LED   ->  3V3          power (backlight tied to 3V3 — always on)
+// Wiring used by this project (ESP32-CAM ↔ ILI9488, VSPI):
+//   Display pin     ESP32-CAM GPIO   Function
+//   ----------      --------------   --------
+//   SDI / MOSI  ->  GPIO 13          MOSI (data to display)
+//   SCK         ->  GPIO 14          SCK  (clock)
+//   CS          ->  GPIO 15          CS   (chip select)
+//   DC / RS     ->  GPIO 12          DC   (data/command) — floats LOW at boot, safe to use
+//   RESET       ->  3V3              tie RST high — do NOT use GPIO 12 (strapping pin)
+//   VCC + LED   ->  3V3              power (backlight tied to 3V3 — always on)
 //   GND         ->  GND
 //
 // ============================================================================
