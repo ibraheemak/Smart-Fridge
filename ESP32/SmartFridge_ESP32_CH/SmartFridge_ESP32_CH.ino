@@ -22,6 +22,7 @@
 #include "SECRETS.h"
 #include "parameters.h"
 #include "display.h"
+#include "dht11.h"
 
 // ============================================================================
 // STATE
@@ -152,6 +153,7 @@ void setup() {
   checkResetButton();
   initWiFi();
   configureTime();
+  initDHT11();
 
   showStatus("Loading inventory", "");
   if (fetchInventory()) {
@@ -181,5 +183,6 @@ void loop() {
     }
   }
 
+  tickDHT11();
   delay(50);
 }
