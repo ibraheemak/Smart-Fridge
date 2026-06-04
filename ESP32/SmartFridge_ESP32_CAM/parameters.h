@@ -1,32 +1,21 @@
 // ============================================================================
-// SmartFridge ESP32-CAM Combined — user parameters
+// SmartFridge ESP32-CAM — user parameters
 // ============================================================================
 //
-// Single-board: ESP32-CAM runs both camera scanning and ILI9488 TFT display.
+// This board does camera scanning only. The ILI9488 TFT now runs on the
+// separate CH devkit (SmartFridge_ESP32_CH) — there is NO display on this board.
 //
-// IMPORTANT — TFT_eSPI User_Setup.h must have:
-//   #define ILI9488_DRIVER
-//   #define TFT_MOSI  13
-//   #define TFT_SCLK  14
-//   #define TFT_CS    -1   // CS tied to GND (always selected — only SPI device on bus)
-//   #define TFT_DC    12   // GPIO 4 = camera flash; GPIO 12 floats LOW at boot (safe)
-//   #define TFT_RST   -1   // RST tied to 3.3V
-//   #define SPI_FREQUENCY  20000000
-//   // USE_HSPI_PORT — leave commented (VSPI with GPIO matrix remapping)
-//   // TFT_MISO — leave undefined (not connected)
+// Wiring (ESP32-CAM):
+//   Camera        ->  AI Thinker pinout (see CAMERA PINS section below)
+//   LED strip     ->  GPIO 2    WS2811 data
+//   Camera flash  ->  GPIO 4    PWM via LEDC
+//   Hall door DO  ->  GPIO 13   door-close auto scan (see DOOR SENSOR section)
 //
-// Wiring (ESP32-CAM ↔ ILI9488):
-//   TFT SDI/MOSI  ->  GPIO 13   SPI data
-//   TFT SCK       ->  GPIO 14   SPI clock
-//   TFT CS        ->  GND       Permanently selected — no GPIO needed
-//   TFT DC/RS     ->  GPIO 12   Data/command (strapping pin but safe — floats LOW at boot)
-//   TFT RST       ->  3V3       Tie high — do NOT use GPIO 12 for RST (only for DC)
-//   TFT VCC+LED   ->  3V3
-//   TFT GND       ->  GND
+// ⚠️ GPIO 12 is the flash-voltage strapping pin — never wire an input there that
+//    can be HIGH at boot, or the board may fail to start.
 //
-//   LED strip     ->  GPIO 2    WS2811 data (moved from GPIO 14)
-//   Camera flash  ->  GPIO 4    PWM via LEDC (unchanged)
-//
+// NOTE: the DISPLAY / LIST RENDERING / icon defines below are inherited from the
+// old combined sketch and are unused on this board (kept only to avoid churn).
 // ============================================================================
 
 #pragma once
@@ -89,9 +78,12 @@
 #define LED_BRIGHTNESS     200
 
 // ----------------------------------------------------------------------------
-// DOOR SENSOR (hall effect, US #10)
+// DOOR SENSOR (hall effect, US #10) — wired to the ESP32-CAM board
 // ----------------------------------------------------------------------------
-#define DOOR_SENSOR_PIN        15     // free pin, INPUT_PULLUP
+// GPIO 13 chosen deliberately: it is free (TFT moved to the CH board) and is
+// NOT a boot-strapping pin. Do NOT use GPIO 12 here — it selects flash voltage
+// at boot; a HIGH (door open) at power-on can stop the CAM from booting.
+#define DOOR_SENSOR_PIN        13     // free pin, INPUT_PULLUP, no strapping issues
 #define DOOR_CLOSED_LEVEL      LOW    // LOW = magnet near = door closed
 #define DOOR_DEBOUNCE_MS       50     // require a stable reading this long
 #define DOOR_SETTLE_MS       1500     // wait after close before capturing
