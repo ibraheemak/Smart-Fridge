@@ -1,33 +1,68 @@
-//user defined parameters
-
-// OLED display width and height, in pixels
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-
-//  4x3 keypad GPIO pins
-#define R4   19 
-#define R3   13 
-#define R2   12 
-#define R1   4    
-#define C1   21 
-#define C2   27 
-#define C3   33  
-
-// INMP441 I2S microphone GPIO pins
-#define I2S_WS 14
-#define I2S_SD 15
-#define I2S_SCK 32
-#define I2S_PORT I2S_NUM_0
-
-// external DAC MAX98357A GPIO pins
-#define DAC_BCK_PIN 26
-#define DAC_WS_PIN 25
-#define DAC_DATA_PIN 22
-
 // ============================================================================
-// ESP32-CAM CAMERA CONFIGURATION (AI Thinker ESP32-CAM)
+// SmartFridge ESP32-CAM Combined — user parameters
 // ============================================================================
-// Camera pin definitions for AI Thinker ESP32-CAM board
+//
+// Single-board: ESP32-CAM runs both camera scanning and ILI9488 TFT display.
+//
+// IMPORTANT — TFT_eSPI User_Setup.h must have:
+//   #define ILI9488_DRIVER
+//   #define TFT_MOSI  13
+//   #define TFT_SCLK  14
+//   #define TFT_CS    -1   // CS tied to GND (always selected — only SPI device on bus)
+//   #define TFT_DC    12   // GPIO 4 = camera flash; GPIO 12 floats LOW at boot (safe)
+//   #define TFT_RST   -1   // RST tied to 3.3V
+//   #define SPI_FREQUENCY  20000000
+//   // USE_HSPI_PORT — leave commented (VSPI with GPIO matrix remapping)
+//   // TFT_MISO — leave undefined (not connected)
+//
+// Wiring (ESP32-CAM ↔ ILI9488):
+//   TFT SDI/MOSI  ->  GPIO 13   SPI data
+//   TFT SCK       ->  GPIO 14   SPI clock
+//   TFT CS        ->  GND       Permanently selected — no GPIO needed
+//   TFT DC/RS     ->  GPIO 12   Data/command (strapping pin but safe — floats LOW at boot)
+//   TFT RST       ->  3V3       Tie high — do NOT use GPIO 12 for RST (only for DC)
+//   TFT VCC+LED   ->  3V3
+//   TFT GND       ->  GND
+//
+//   LED strip     ->  GPIO 2    WS2811 data (moved from GPIO 14)
+//   Camera flash  ->  GPIO 4    PWM via LEDC (unchanged)
+//
+// ============================================================================
+
+#pragma once
+
+// ----------------------------------------------------------------------------
+// FRIDGE IDENTITY
+// ----------------------------------------------------------------------------
+#define FRIDGE_ID  "fridge1"
+
+// ----------------------------------------------------------------------------
+// DISPLAY
+// ----------------------------------------------------------------------------
+#define DISPLAY_ROTATION    1        // 1/3 = landscape (480x320)
+#define TFT_BL_PIN         -1        // Backlight tied to 3V3 — no software control
+#define TFT_BL_ON          HIGH
+
+// ----------------------------------------------------------------------------
+// LIST RENDERING
+// ----------------------------------------------------------------------------
+#define HEADER_HEIGHT_PX    40
+#define FOOTER_HEIGHT_PX    24
+#define ROW_HEIGHT_PX       56
+#define SIDE_PADDING_PX     12
+#define MAX_ITEMS_DISPLAYED 32
+
+// ----------------------------------------------------------------------------
+// FIREBASE STORAGE — item icons
+// ----------------------------------------------------------------------------
+#define FIREBASE_STORAGE_BUCKET  "smartfridge-79217.firebasestorage.app"
+#define ICON_PATH_PREFIX         "icons/"
+#define ICON_EXTENSION           ".jpg"
+#define ICON_SIZE_PX             48
+
+// ----------------------------------------------------------------------------
+// CAMERA PINS (AI Thinker ESP32-CAM)
+// ----------------------------------------------------------------------------
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM      0
@@ -44,67 +79,50 @@
 #define VSYNC_GPIO_NUM    25
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
-#define FLASH_GPIO_NUM     4
 
-// ============================================================================
-// DEBUG SETTINGS
-// ============================================================================
-#define DEBUG_MODE 1                // Set to 1 to enable debug output and Gemini text description
+// ----------------------------------------------------------------------------
+// FLASH & LED STRIP
+// ----------------------------------------------------------------------------
+#define FLASH_GPIO_NUM     4         // Camera flash (PWM via LEDC)
+#define LED_DATA_PIN       2         // WS2811 LED strip (moved from GPIO 14)
+#define LED_NUM_LEDS       4
+#define LED_BRIGHTNESS     200
 
-// ============================================================================
-// CAMERA CAPTURE SETTINGS
-// ============================================================================
-#define CAMERA_JPEG_QUALITY 20      // 0-63, lower is better quality
-#define CAMERA_XCLK_FREQ 5000000    // XClk frequency reduced to 5MHz (5000000Hz) to avoid LEDC timer conflicts
-#define CAMERA_LEDC_CHANNEL 1        // Use LEDC_CHANNEL_1 instead of CHANNEL_0 to avoid conflicts
-#define FLASH_DURATION_MS 600       // Time (ms) for AEC to converge after flushing pre-flash frames
-#define FLASH_PWM_DUTY      80      // Flash brightness: 0 (off) – 255 (full). 80 ≈ 31%
-#define CAPTURE_INTERVAL_MS 30000   // Interval between captures (30 seconds)
-#define CAMERA_WARMUP_DELAY_MS 500  // Warmup delay before actual capture
+// ----------------------------------------------------------------------------
+// DEBUG
+// ----------------------------------------------------------------------------
+#define DEBUG_MODE 1   // 1 = ask Gemini for image quality description + camera warmup
 
-// NOTE: GPIO CONFLICTS - Your board shares pins between peripherals:
-//       Keypad (R4=19, Y4=19 conflict), I2S/DAC (25,26,27 overlap with camera)
-//       If camera still fails, disable unused peripherals or remap their pins.
+// ----------------------------------------------------------------------------
+// CAMERA CAPTURE
+// ----------------------------------------------------------------------------
+#define CAMERA_JPEG_QUALITY      20
+#define CAMERA_XCLK_FREQ    5000000
+#define CAMERA_LEDC_CHANNEL       1  // LEDC_CHANNEL_1 avoids conflicts
+#define CAMERA_WARMUP_DELAY_MS  500  // warmup frames delay (DEBUG_MODE only)
+#define FLASH_DURATION_MS       600
+#define FLASH_PWM_DUTY           80  // 0-255; 80 ≈ 31% brightness
 
-// ============================================================================
-// WiFi SETTINGS
-// ============================================================================
-#define WIFI_MAX_ATTEMPTS 20        // Maximum WiFi connection attempts
-#define WIFI_TIMEOUT_MS 10000       // WiFi connection timeout
+// ----------------------------------------------------------------------------
+// DISPLAY TIMING
+// ----------------------------------------------------------------------------
+#define INVENTORY_POLL_INTERVAL_MS 60000  // background Firestore poll every 60 s
 
-// WiFiManager captive-portal settings
-#define WIFI_AP_NAME          "SmartFridge_Setup"  // AP name shown during setup
-#define WIFI_PORTAL_TIMEOUT_S 180                  // Seconds before portal gives up and restarts
-#define RESET_BUTTON_PIN      0                    // GPIO 0 = BOOT button (hold at power-on to wipe credentials)
-#define RESET_HOLD_MS         3000                 // How long to hold the button to trigger a wipe
+// ----------------------------------------------------------------------------
+// WIFI
+// ----------------------------------------------------------------------------
+#define WIFI_AP_NAME          "SmartFridge_Setup"
+#define WIFI_PORTAL_TIMEOUT_S 180
+#define RESET_BUTTON_PIN        0    // BOOT button — hold at power-on to wipe creds
+#define RESET_HOLD_MS        3000
 
-// ============================================================================
-// GEMINI API SETTINGS
-// ============================================================================
-#define GEMINI_REQUEST_TIMEOUT_MS 30000  // Request timeout (30 seconds)
-#define GEMINI_MAX_RETRIES 2             // Number of retry attempts
-#define GEMINI_DEBUG_DESCRIPTION 1       // Set to 1 to include text description in debug mode
+// ----------------------------------------------------------------------------
+// GEMINI
+// ----------------------------------------------------------------------------
+#define GEMINI_REQUEST_TIMEOUT_MS 30000
+#define GEMINI_MAX_RETRIES            2
 
-// ============================================================================
-// FIREBASE SETTINGS
-// ============================================================================
-#define FIREBASE_REQUEST_TIMEOUT_MS 15000  // Firebase request timeout
-
-// ============================================================================
-// TIMEZONE SETTINGS
-// ============================================================================
-// POSIX timezone string — controls local time for timestamps and document IDs.
-// Israel: "IST-2IDT,M3.4.4/26,M10.5.0"  (UTC+2, DST UTC+3)
-// UTC:    "UTC0"
+// ----------------------------------------------------------------------------
+// TIMEZONE
+// ----------------------------------------------------------------------------
 #define TIMEZONE "IST-2IDT,M3.4.4/26,M10.5.0"
-
-// ============================================================================
-// LED STRIP SETTINGS (WS2811B addressable)
-// ============================================================================
-// GPIO 14 is free on AI Thinker ESP32-CAM (not used by camera or critical boot path)
-#define LED_DATA_PIN    14
-#define LED_NUM_LEDS    4    
-#define LED_BRIGHTNESS  200   // 0-255
-
-
-
