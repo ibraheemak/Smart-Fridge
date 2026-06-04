@@ -2,13 +2,17 @@
 // SmartFridge ESP32-CAM — user parameters
 // ============================================================================
 //
-// This board handles camera scanning only.
-// The ILI9488 display is driven by the separate ESP32-CH board.
+// This board does camera scanning only. The ILI9488 TFT now runs on the
+// separate CH devkit (SmartFridge_ESP32_CH) — there is NO display on this board.
 //
-// Wiring:
-//   LED strip data  ->  GPIO 2    WS2811
-//   Camera flash    ->  GPIO 4    PWM via LEDC
+// Wiring (ESP32-CAM):
+//   Camera        ->  AI Thinker pinout (see CAMERA PINS section below)
+//   LED strip     ->  GPIO 2    WS2811 data
+//   Camera flash  ->  GPIO 4    PWM via LEDC
+//   Hall door DO  ->  GPIO 13   door-close auto scan (see DOOR SENSOR section)
 //
+// ⚠️ GPIO 12 is the flash-voltage strapping pin — never wire an input there that
+//    can be HIGH at boot, or the board may fail to start.
 // ============================================================================
 
 #pragma once
@@ -45,6 +49,17 @@
 #define LED_DATA_PIN       2         // WS2811 LED strip
 #define LED_NUM_LEDS       4
 #define LED_BRIGHTNESS     200
+
+// ----------------------------------------------------------------------------
+// DOOR SENSOR (hall effect, US #10) — wired to the ESP32-CAM board
+// ----------------------------------------------------------------------------
+// GPIO 13 chosen deliberately: it is free (TFT moved to the CH board) and is
+// NOT a boot-strapping pin. Do NOT use GPIO 12 here — it selects flash voltage
+// at boot; a HIGH (door open) at power-on can stop the CAM from booting.
+#define DOOR_SENSOR_PIN        13     // free pin, INPUT_PULLUP, no strapping issues
+#define DOOR_CLOSED_LEVEL      LOW    // LOW = magnet near = door closed
+#define DOOR_DEBOUNCE_MS       50     // require a stable reading this long
+#define DOOR_SETTLE_MS       1500     // wait after close before capturing
 
 // ----------------------------------------------------------------------------
 // DEBUG
