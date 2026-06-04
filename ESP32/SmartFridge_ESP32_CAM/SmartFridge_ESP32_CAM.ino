@@ -39,16 +39,20 @@ WebServer webServer(80);
 // WEB SERVER — /latest.jpg debug endpoint
 // ============================================================================
 void handleLatestJpeg() {
-  WiFiClient client = webServer.client();
   if (latest_jpeg && latest_jpeg_size > 0) {
-    String header = "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\n";
-    header += "Content-Length: " + String(latest_jpeg_size) + "\r\n";
-    header += "Cache-Control: no-cache\r\nConnection: close\r\n\r\n";
-    client.print(header);
-    client.write(latest_jpeg, latest_jpeg_size);
+    WiFiClient client = webServer.client();
+    client.print("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: ");
+    client.print(latest_jpeg_size);
+    client.print("\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n");
+    size_t sent = 0;
+    while (sent < latest_jpeg_size) {
+      size_t chunk = min((size_t)1024, latest_jpeg_size - sent);
+      client.write(latest_jpeg + sent, chunk);
+      sent += chunk;
+    }
     client.flush();
   } else {
-    webServer.send(404, "text/plain", "No image captured yet.");
+    webServer.send(404, "text/plain", "No image captured yet. Send SCAN via serial first.");
   }
 }
 
@@ -207,3 +211,4 @@ void loop() {
 
   delay(50);
 }
+
