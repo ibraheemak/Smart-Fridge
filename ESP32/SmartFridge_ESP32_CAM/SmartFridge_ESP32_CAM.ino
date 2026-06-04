@@ -29,6 +29,7 @@
 #include "firebase.h"
 #include "gemini.h"
 #include "led_strip.h"
+#include "door.h"
 
 // ============================================================================
 // STATE
@@ -161,10 +162,11 @@ void processSerialCommand(String cmd) {
   else if (cmd == "LED ON")    ledStripOn();
   else if (cmd == "LED OFF")   ledStripOff();
   else if (cmd == "STATUS")
-    Serial.printf("[STATUS] WiFi: %s  IP: %s  Heap: %u\n",
+    Serial.printf("[STATUS] WiFi: %s  IP: %s  Heap: %u  Door: %s\n",
                   WiFi.status() == WL_CONNECTED ? "OK" : "DISCONNECTED",
                   WiFi.localIP().toString().c_str(),
-                  (unsigned)ESP.getFreeHeap());
+                  (unsigned)ESP.getFreeHeap(),
+                  doorIsClosed() ? "CLOSED" : "OPEN");
   else if (cmd == "WIFIRESET") { WiFiManager wm; wm.resetSettings(); ESP.restart(); }
   else if (cmd == "HELP")      printHelp();
   else if (cmd.length() > 0)   Serial.printf("[CMD] Unknown: %s\n", cmd.c_str());
@@ -185,6 +187,7 @@ void setup() {
   initFlash();
   initCamera();
   initLEDStrip();
+  initDoorSensor();
 
   webServer.on("/latest.jpg", HTTP_GET, handleLatestJpeg);
   webServer.begin();
@@ -201,6 +204,12 @@ void loop() {
   }
 
   webServer.handleClient();
+
+  if (doorJustClosed()) {
+    Serial.println("[DOOR] Closed — auto scan");
+    delay(DOOR_SETTLE_MS);          // let door seal + items settle
+    captureAndProcess();            // existing scan flow
+  }
 
   if (Serial.available())
     processSerialCommand(Serial.readStringUntil('\n'));

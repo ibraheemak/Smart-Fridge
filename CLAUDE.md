@@ -21,7 +21,8 @@ GPIO  5  — Camera Y2
 GPIO 12  — TFT DC/RS              ← OCCUPIED (strapping pin — floats LOW at boot, safe)
 GPIO 13  — TFT MOSI               ← OCCUPIED
 GPIO 14  — TFT SCK                ← OCCUPIED
-GPIO 15  — TFT CS                 ← OCCUPIED
+GPIO 15  — Hall door sensor OUT   ← OCCUPIED (US #10 — door-close auto scan)
+GPIO 16  — free ✅
 GPIO 18  — Camera Y3
 GPIO 19  — Camera Y4
 GPIO 21  — Camera Y5
@@ -39,7 +40,6 @@ GPIO 39  — Camera Y7 (input only)
 
 **Free GPIO pins for new sensors:**
 - GPIO 1 (TX) / GPIO 3 (RX) — serial, use carefully
-- GPIO 16 — free ✅
 - GPIO 33 — free ✅ (was used in older sketch for TFT DC — now free)
 
 > ⚠️ GPIOs 34, 35, 36, 39 are INPUT ONLY — no pull-up, no output.

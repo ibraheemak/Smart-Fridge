@@ -89,6 +89,14 @@
 #define LED_BRIGHTNESS     200
 
 // ----------------------------------------------------------------------------
+// DOOR SENSOR (hall effect, US #10)
+// ----------------------------------------------------------------------------
+#define DOOR_SENSOR_PIN        15     // free pin, INPUT_PULLUP
+#define DOOR_CLOSED_LEVEL      LOW    // LOW = magnet near = door closed
+#define DOOR_DEBOUNCE_MS       50     // require a stable reading this long
+#define DOOR_SETTLE_MS       1500     // wait after close before capturing
+
+// ----------------------------------------------------------------------------
 // DEBUG
 // ----------------------------------------------------------------------------
 #define DEBUG_MODE 1   // 1 = ask Gemini for image quality description + camera warmup
