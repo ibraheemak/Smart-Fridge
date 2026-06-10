@@ -49,10 +49,10 @@ class DefaultFirebaseOptions {
     iosBundleId: 'com.smartfridge.app',
   );
 
-  // ── Web (optional) ─────────────────────────────────────────────────────────
+  // ── Web ────────────────────────────────────────────────────────────────────
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'FILL_IN_WEB_API_KEY',
-    appId: 'FILL_IN_WEB_APP_ID',
+    apiKey: 'AIzaSyBjZFC8OVoeO3fJoCRi2usTGYIKH6rk9So',
+    appId: '1:657433954494:web:f7c2e08523425d86ca36ef',
     messagingSenderId: '657433954494',
     projectId: 'smartfridge-79217',
     storageBucket: 'smartfridge-79217.firebasestorage.app',
