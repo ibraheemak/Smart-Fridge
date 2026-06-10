@@ -26,14 +26,14 @@ class TemperatureCard extends StatelessWidget {
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
-                accent.withOpacity(0.08),
-                accent.withOpacity(0.03),
+                accent.withValues(alpha: 0.08),
+                accent.withValues(alpha: 0.03),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: accent.withOpacity(0.2)),
+            border: Border.all(color: accent.withValues(alpha: 0.2)),
           ),
           child: Row(
             children: [
@@ -41,7 +41,7 @@ class TemperatureCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: accent.withOpacity(0.12),
+                  color: accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(

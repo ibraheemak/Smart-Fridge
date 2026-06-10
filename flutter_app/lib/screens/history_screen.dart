@@ -141,7 +141,7 @@ class _ItemCountChart extends StatelessWidget {
                 barTouchData: BarTouchData(
                   touchTooltipData: BarTouchTooltipData(
                     getTooltipColor: (_) =>
-                        AppColors.primary.withOpacity(0.9),
+                        AppColors.primary.withValues(alpha: 0.9),
                     getTooltipItem: (group, _, rod, __) => BarTooltipItem(
                       '${rod.toY.toInt()} items',
                       const TextStyle(
@@ -207,7 +207,7 @@ class _ItemCountChart extends StatelessWidget {
                         backDrawRodData: BackgroundBarChartRodData(
                           show: true,
                           toY: maxY,
-                          color: AppColors.primary.withOpacity(0.06),
+                          color: AppColors.primary.withValues(alpha: 0.06),
                         ),
                       ),
                     ],
@@ -260,7 +260,7 @@ class _ScanTile extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.1),
+                      color: AppColors.primary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Icon(Icons.camera_alt_rounded,

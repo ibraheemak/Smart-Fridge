@@ -59,16 +59,10 @@ static const String geminiApiKey = 'YOUR_ACTUAL_KEY_HERE';
 static const String esp32CamBaseUrl = 'http://192.168.1.xxx';
 ```
 
-## 7. Allow HTTP (camera image is served over HTTP, not HTTPS)
+## 7. Allow HTTP (camera image is served over HTTP, not HTTPS) ✅ Done
 
-In `android/app/src/main/AndroidManifest.xml` add  
-`android:usesCleartextTraffic="true"` to the `<application>` tag:
-
-```xml
-<application
-    android:usesCleartextTraffic="true"
-    ...>
-```
+`android:usesCleartextTraffic="true"` and `<uses-permission INTERNET/>` are already  
+in `android/app/src/main/AndroidManifest.xml`. Nothing to do here.
 
 ## 8. Run the app
 

@@ -376,10 +376,10 @@ class _RecipesTab extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: AppColors.error.withOpacity(0.08),
+                    color: AppColors.error.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                        color: AppColors.error.withOpacity(0.3)),
+                        color: AppColors.error.withValues(alpha: 0.3)),
                   ),
                   child: Text(error,
                       textAlign: TextAlign.center,
@@ -477,7 +477,7 @@ class _RecipeCard extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: _diffColor.withOpacity(0.1),
+                  color: _diffColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(

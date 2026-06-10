@@ -27,9 +27,9 @@ class DefaultFirebaseOptions {
   //   client[0].client_info.mobilesdk_app_id → appId
   //   project_info.project_number   → messagingSenderId
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'FILL_IN_ANDROID_API_KEY',
-    appId: 'FILL_IN_ANDROID_APP_ID',
-    messagingSenderId: 'FILL_IN_SENDER_ID',
+    apiKey: 'AIzaSyCpScudaWplabSgjN98XHTpJW9en0o6Sz0',
+    appId: '1:657433954494:android:bf402e0be7dac0cfca36ef',
+    messagingSenderId: '657433954494',
     projectId: 'smartfridge-79217',
     storageBucket: 'smartfridge-79217.firebasestorage.app',
   );
@@ -43,7 +43,7 @@ class DefaultFirebaseOptions {
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'FILL_IN_IOS_API_KEY',
     appId: 'FILL_IN_IOS_APP_ID',
-    messagingSenderId: 'FILL_IN_SENDER_ID',
+    messagingSenderId: '657433954494',
     projectId: 'smartfridge-79217',
     storageBucket: 'smartfridge-79217.firebasestorage.app',
     iosBundleId: 'com.smartfridge.app',
@@ -53,7 +53,7 @@ class DefaultFirebaseOptions {
   static const FirebaseOptions web = FirebaseOptions(
     apiKey: 'FILL_IN_WEB_API_KEY',
     appId: 'FILL_IN_WEB_APP_ID',
-    messagingSenderId: 'FILL_IN_SENDER_ID',
+    messagingSenderId: '657433954494',
     projectId: 'smartfridge-79217',
     storageBucket: 'smartfridge-79217.firebasestorage.app',
     authDomain: 'smartfridge-79217.firebaseapp.com',
