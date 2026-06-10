@@ -98,6 +98,31 @@ bool saveToFirebase(JsonDocument& items_doc) {
   return (code == 200 || code == 201);
 }
 
+bool saveTemperature(float tempC, float humidity) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  StaticJsonDocument<512> doc;
+  JsonObject fields = doc.createNestedObject("fields");
+  fields["updatedAt"]["stringValue"]   = getFormattedTimestamp();
+  fields["temperature"]["doubleValue"] = tempC;
+  fields["humidity"]["doubleValue"]    = humidity;
+  fields["source"]["stringValue"]      = "ESP32-CAM";
+
+  String payload;
+  serializeJson(doc, payload);
+  String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+               "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
+               "/sensors/temperature?key=" + String(FIREBASE_API_KEY);
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.PATCH(payload);
+  http.end();
+  Serial.printf("[FIREBASE] temperature save %s (%.1f C, %.1f %%)\n",
+                (code==200||code==201) ? "OK" : "FAILED", tempC, humidity);
+  return (code == 200 || code == 201);
+}
+
 bool saveScanHistory(JsonDocument& items_doc) {
   if (!items_doc.containsKey("items")) return false;
 

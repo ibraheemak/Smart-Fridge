@@ -30,11 +30,13 @@
 #include "gemini.h"
 #include "led_strip.h"
 #include "door.h"
+#include "temperature.h"
 
 // ============================================================================
 // STATE
 // ============================================================================
 WebServer webServer(80);
+unsigned long lastTempReadMs = 0;
 
 // ============================================================================
 // WEB SERVER — /latest.jpg debug endpoint
@@ -146,6 +148,19 @@ void captureAndProcess() {
 }
 
 // ============================================================================
+// TEMPERATURE / HUMIDITY
+// ============================================================================
+void readAndPublishTemperature() {
+  float tempC, humidity;
+  if (!readTemperature(tempC, humidity)) {
+    Serial.println("[TEMP] Read failed");
+    return;
+  }
+  Serial.printf("[TEMP] %.1f C, %.1f %% RH\n", tempC, humidity);
+  saveTemperature(tempC, humidity);
+}
+
+// ============================================================================
 // SERIAL COMMANDS
 // ============================================================================
 void printHelp() {
@@ -154,6 +169,7 @@ void printHelp() {
   Serial.println("SCAN      — Capture, analyze, save to Firestore");
   Serial.println("LED ON    — LED strip on (test)");
   Serial.println("LED OFF   — LED strip off (test)");
+  Serial.println("TEMP      — Read DHT11 + publish to Firestore");
   Serial.println("STATUS    — System status");
   Serial.println("WIFIRESET — Wipe WiFi credentials");
   Serial.println("HELP      — This menu");
@@ -165,6 +181,7 @@ void processSerialCommand(String cmd) {
   if      (cmd == "SCAN")      captureAndProcess();
   else if (cmd == "LED ON")    ledStripOn();
   else if (cmd == "LED OFF")   ledStripOff();
+  else if (cmd == "TEMP")      readAndPublishTemperature();
   else if (cmd == "STATUS")
     Serial.printf("[STATUS] WiFi: %s  IP: %s  Heap: %u  Door: %s\n",
                   WiFi.status() == WL_CONNECTED ? "OK" : "DISCONNECTED",
@@ -192,6 +209,7 @@ void setup() {
   initCamera();
   initLEDStrip();
   initDoorSensor();
+  initTempSensor();
 
   webServer.on("/latest.jpg", HTTP_GET, handleLatestJpeg);
   webServer.begin();
@@ -208,6 +226,11 @@ void loop() {
   }
 
   webServer.handleClient();
+
+  if (millis() - lastTempReadMs >= TEMP_READ_INTERVAL_MS) {
+    lastTempReadMs = millis();
+    readAndPublishTemperature();
+  }
 
   if (doorJustClosed()) {
     Serial.println("[DOOR] Closed — auto scan");
