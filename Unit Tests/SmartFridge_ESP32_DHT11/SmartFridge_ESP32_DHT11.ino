@@ -1,99 +1,74 @@
-/*
- * SmartFridge — DHT11 Temperature & Humidity Sensor (isolated test)
- *
- * US #8, #9 — Temperature monitoring + alert. Standalone sketch: NO camera,
- * NO WiFi, NO display. Purpose: confirm wiring and readings on GPIO 33
- * before integrating into SmartFridge_ESP32_CAM.
- *
- * Wiring (3-pin KY-015-style module — onboard pull-up, no external
- * resistor needed; follow the labels printed on the board, not generic
- * online diagrams):
- *   DHT11 "+" → 3.3V
- *   DHT11 "-" → GND
- *   DHT11 "S" → GPIO 14   (free pin on CAM board)
- *
- * No external library: this sketch bit-bangs the DHT11 one-wire protocol
- * directly with interrupts disabled during the timing-critical read, which
- * is more reliable on ESP32 than the Adafruit/DHTesp libraries (their
- * digitalRead-based polling loses the race against the WiFi/RTOS
- * scheduler).
- *
- * Runs on any ESP32 (devkit or CAM). Watch the serial log (115200 baud)
- * for temperature (°C) and humidity (%) readings every ~2.5 seconds.
- */
+// Example testing sketch for various DHT humidity/temperature sensors
+// Written by ladyada, public domain
 
-#define DHT_PIN   14     // free pin on CAM board
+// REQUIRES the following Arduino libraries:
+// - DHT Sensor Library: https://github.com/adafruit/DHT-sensor-library
+// - Adafruit Unified Sensor Lib: https://github.com/adafruit/Adafruit_Sensor
 
-// Read one 40-bit DHT11 frame into data[5] (humidity int, humidity dec,
-// temp int, temp dec, checksum). Returns true on success.
-static bool dhtRead(uint8_t data[5]) {
-  memset(data, 0, 5);
+#include "DHT.h"
 
-  // 1. Start signal: pull low >=18ms, then release.
-  pinMode(DHT_PIN, OUTPUT);
-  digitalWrite(DHT_PIN, LOW);
-  delay(20);
+#define DHTPIN 14     // Digital pin connected to the DHT sensor
+// Feather HUZZAH ESP8266 note: use pins 3, 4, 5, 12, 13 or 14 --
+// Pin 15 can work but DHT must be disconnected during program upload.
 
-  noInterrupts();
-  pinMode(DHT_PIN, INPUT_PULLUP);
+// Uncomment whatever type you're using!
+//#define DHTTYPE DHT11   // DHT 11
+#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+//#define DHTTYPE DHT21   // DHT 21 (AM2301)
 
-  // 2. Wait for sensor's ACK: low ~80us, then high ~80us.
-  uint32_t timeout = micros();
-  while (digitalRead(DHT_PIN) == HIGH) {
-    if (micros() - timeout > 100) { interrupts(); return false; }
-  }
-  timeout = micros();
-  while (digitalRead(DHT_PIN) == LOW) {
-    if (micros() - timeout > 100) { interrupts(); return false; }
-  }
-  timeout = micros();
-  while (digitalRead(DHT_PIN) == HIGH) {
-    if (micros() - timeout > 100) { interrupts(); return false; }
-  }
+// Connect pin 1 (on the left) of the sensor to +5V
+// NOTE: If using a board with 3.3V logic like an Arduino Due connect pin 1
+// to 3.3V instead of 5V!
+// Connect pin 2 of the sensor to whatever your DHTPIN is
+// Connect pin 3 (on the right) of the sensor to GROUND (if your sensor has 3 pins)
+// Connect pin 4 (on the right) of the sensor to GROUND and leave the pin 3 EMPTY (if your sensor has 4 pins)
+// Connect a 10K resistor from pin 2 (data) to pin 1 (power) of the sensor
 
-  // 3. Read 40 bits. Each bit = ~50us low, then high for ~26-28us (0)
-  //    or ~70us (1).
-  for (int i = 0; i < 40; i++) {
-    timeout = micros();
-    while (digitalRead(DHT_PIN) == LOW) {
-      if (micros() - timeout > 100) { interrupts(); return false; }
-    }
-
-    uint32_t highStart = micros();
-    while (digitalRead(DHT_PIN) == HIGH) {
-      if (micros() - highStart > 150) { interrupts(); return false; }
-    }
-    uint32_t highDur = micros() - highStart;
-
-    data[i / 8] <<= 1;
-    if (highDur > 40) data[i / 8] |= 1;
-  }
-  interrupts();
-
-  uint8_t checksum = data[0] + data[1] + data[2] + data[3];
-  return (checksum == data[4]);
-}
+// Initialize DHT sensor.
+// Note that older versions of this library took an optional third parameter to
+// tweak the timings for faster processors.  This parameter is no longer needed
+// as the current DHT reading algorithm adjusts itself to work on faster procs.
+DHT dht(DHTPIN, DHTTYPE);
 
 void setup() {
-  Serial.begin(115200);
-  delay(500);
-  Serial.println("\n[BOOT] DHT11 temperature/humidity sensor test");
-  Serial.printf("[BOOT] DATA (S) on GPIO%d\n", DHT_PIN);
-  delay(1500);  // DHT11 needs to settle before its first read
+  Serial.begin(9600);
+  Serial.println(F("DHTxx test!"));
+
+  dht.begin();
 }
 
 void loop() {
-  delay(2000);  // DHT11 needs at least 1-2s between reads
+  // Wait a few seconds between measurements.
+  delay(2000);
 
-  uint8_t data[5];
-  if (!dhtRead(data)) {
-    Serial.println("[DHT11] Read failed (no response or checksum mismatch)");
+  // Reading temperature or humidity takes about 250 milliseconds!
+  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+  float h = dht.readHumidity();
+  // Read temperature as Celsius (the default)
+  float t = dht.readTemperature();
+  // Read temperature as Fahrenheit (isFahrenheit = true)
+  float f = dht.readTemperature(true);
+
+  // Check if any reads failed and exit early (to try again).
+  if (isnan(h) || isnan(t) || isnan(f)) {
+    Serial.println(F("Failed to read from DHT sensor!"));
     return;
   }
 
-  float humidity    = data[0] + data[1] / 10.0f;
-  float tempCelsius = data[2] + data[3] / 10.0f;
+  // Compute heat index in Fahrenheit (the default)
+  float hif = dht.computeHeatIndex(f, h);
+  // Compute heat index in Celsius (isFahreheit = false)
+  float hic = dht.computeHeatIndex(t, h, false);
 
-  Serial.printf("[DHT11] Temperature = %.1f C   Humidity = %.1f %%\n",
-                tempCelsius, humidity);
+  Serial.print(F("Humidity: "));
+  Serial.print(h);
+  Serial.print(F("%  Temperature: "));
+  Serial.print(t);
+  Serial.print(F("°C "));
+  Serial.print(f);
+  Serial.print(F("°F  Heat index: "));
+  Serial.print(hic);
+  Serial.print(F("°C "));
+  Serial.print(hif);
+  Serial.println(F("°F"));
 }

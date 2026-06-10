@@ -64,8 +64,8 @@
 // ----------------------------------------------------------------------------
 // DHT11 TEMPERATURE / HUMIDITY SENSOR (US #8, #9)
 // ----------------------------------------------------------------------------
-// 3-pin module (onboard pull-up). "S" -> GPIO14, "+" -> 3.3V, "-" -> GND.
-#define DHT_PIN                14     // free pin, no strapping issues
+// 3-pin module (onboard pull-up). "S" -> GPIO13, "+" -> 3.3V, "-" -> GND.
+#define DHT_PIN                13     // free pin, no strapping issues
 #define TEMP_READ_INTERVAL_MS  60000  // read + publish once per minute
 
 // ----------------------------------------------------------------------------
