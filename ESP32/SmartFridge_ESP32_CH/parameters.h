@@ -15,7 +15,8 @@
 //   ILI9488 TFT:
 //     SDI/MOSI  ->  GPIO 23
 //     SCK       ->  GPIO 18
-//     CS        ->  GND       permanently selected (only SPI display on bus)
+//     CS        ->  GPIO 26   (was GND — moved so TFT_eSPI can deselect the
+//                              TFT while reading the XPT2046 touch chip)
 //     DC/RS     ->  GPIO 27
 //     RST       ->  GPIO 4    reset pulse on boot
 //     VCC+LED   ->  3V3

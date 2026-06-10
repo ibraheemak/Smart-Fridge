@@ -5,7 +5,7 @@
 #define TFT_MOSI  23
 #define TFT_SCLK  18
 #define TFT_MISO  19
-#define TFT_CS    -1
+#define TFT_CS    26
 #define TFT_DC    27
 #define TFT_RST    4
 
@@ -22,4 +22,4 @@
 
 #define SPI_FREQUENCY        10000000
 #define SPI_READ_FREQUENCY   10000000
-#define SPI_TOUCH_FREQUENCY   2500000
+#define SPI_TOUCH_FREQUENCY   1000000

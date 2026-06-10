@@ -1,5 +1,10 @@
-// TFT_eSPI configuration for SmartFridge Display ESP32 devkit + ILI9488.
-// Picked up automatically by TFT_eSPI instead of the library's User_Setup.h.
+// TFT_eSPI configuration for the SmartFridge ILI9488 + XPT2046 display test.
+// Identical to SmartFridge_ESP32_CH/tft_setup.h — same hardware.
+//
+// IMPORTANT: TFT_eSPI is configured at the LIBRARY level via
+// User_Setup_Select.h, not per-sketch. Make sure your installed TFT_eSPI
+// library is pointed at this file (or the matching one in
+// SmartFridge_ESP32_CH) before building this test.
 
 #define USER_SETUP_INFO "SmartFridge_Display"
 
