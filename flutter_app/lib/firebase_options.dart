@@ -1,0 +1,61 @@
+// SETUP REQUIRED — see SETUP.md for step-by-step instructions.
+// Replace every 'FILL_IN_...' value with your Firebase project credentials.
+// Firebase Console → Project Settings → General → Your apps → Add app (Android/iOS)
+
+import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
+
+class DefaultFirebaseOptions {
+  static FirebaseOptions get currentPlatform {
+    if (kIsWeb) return web;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return android;
+      case TargetPlatform.iOS:
+        return ios;
+      default:
+        throw UnsupportedError(
+          'DefaultFirebaseOptions not configured for this platform.',
+        );
+    }
+  }
+
+  // ── Android ────────────────────────────────────────────────────────────────
+  // From google-services.json:
+  //   api_key[0].current_key        → apiKey
+  //   client[0].client_info.mobilesdk_app_id → appId
+  //   project_info.project_number   → messagingSenderId
+  static const FirebaseOptions android = FirebaseOptions(
+    apiKey: 'FILL_IN_ANDROID_API_KEY',
+    appId: 'FILL_IN_ANDROID_APP_ID',
+    messagingSenderId: 'FILL_IN_SENDER_ID',
+    projectId: 'smartfridge-79217',
+    storageBucket: 'smartfridge-79217.firebasestorage.app',
+  );
+
+  // ── iOS ────────────────────────────────────────────────────────────────────
+  // From GoogleService-Info.plist:
+  //   API_KEY       → apiKey
+  //   GOOGLE_APP_ID → appId
+  //   GCM_SENDER_ID → messagingSenderId
+  //   BUNDLE_ID     → iosBundleId
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'FILL_IN_IOS_API_KEY',
+    appId: 'FILL_IN_IOS_APP_ID',
+    messagingSenderId: 'FILL_IN_SENDER_ID',
+    projectId: 'smartfridge-79217',
+    storageBucket: 'smartfridge-79217.firebasestorage.app',
+    iosBundleId: 'com.smartfridge.app',
+  );
+
+  // ── Web (optional) ─────────────────────────────────────────────────────────
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'FILL_IN_WEB_API_KEY',
+    appId: 'FILL_IN_WEB_APP_ID',
+    messagingSenderId: 'FILL_IN_SENDER_ID',
+    projectId: 'smartfridge-79217',
+    storageBucket: 'smartfridge-79217.firebasestorage.app',
+    authDomain: 'smartfridge-79217.firebaseapp.com',
+  );
+}
