@@ -215,6 +215,20 @@ bool fetchIconJpeg(const String& item_name, uint8_t** out_buf, size_t* out_len) 
 
 static const size_t ICON_MAX_SRC_BYTES = 96 * 1024;
 
+// Drawn when an icon can't be decoded (e.g. unsupported/progressive JPEG) or
+// fetched at all: a neutral box with the item's first letter.
+void drawIconPlaceholder(const String& name, int x, int y, uint16_t bg) {
+  tft.fillRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, bg);
+  tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_DARKGREY);
+  if (name.length() == 0) return;
+  String letter = String(name[0]);
+  letter.toUpperCase();
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, bg);
+  tft.setTextSize(2);
+  tft.drawString(letter, x + ICON_SIZE_PX / 2, y + ICON_SIZE_PX / 2);
+}
+
 void drawIcon(const String& name, int x, int y, uint16_t bg) {
   tft.fillRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, bg);
 
@@ -226,11 +240,15 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
   }
 
   uint16_t jw = 0, jh = 0;
-  if (TJpgDec.getJpgSize(&jw, &jh, jbuf, jlen) != 0 || jw == 0 || jh == 0) {
+  int size_rc = TJpgDec.getJpgSize(&jw, &jh, jbuf, jlen);
+  if (size_rc != 0 || jw == 0 || jh == 0) {
     TJpgDec.setJpgScale(1);
     TJpgDec.setCallback(tftJpgOutput);
-    if (TJpgDec.drawJpg(x, y, jbuf, jlen) != 0)
-      tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_RED);
+    int rc1 = TJpgDec.drawJpg(x, y, jbuf, jlen);
+    Serial.printf("[ICON] %s getJpgSize rc=%d (jw=%u jh=%u) -> fallback drawJpg rc=%d\n",
+                   name.c_str(), size_rc, jw, jh, rc1);
+    if (rc1 != 0)
+      drawIconPlaceholder(name, x, y, bg);
     free(jbuf);
     return;
   }
@@ -252,7 +270,11 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
   uint16_t* sbuf = nullptr;
   if (psramFound()) sbuf = (uint16_t*) ps_malloc((size_t)sw * sh * 2);
   if (!sbuf)        sbuf = (uint16_t*) malloc((size_t)sw * sh * 2);
-  if (!sbuf) { free(jbuf); tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_RED); return; }
+  if (!sbuf) {
+    Serial.printf("[ICON] %s sbuf malloc failed (%dx%d, %u bytes, psram=%d)\n",
+                   name.c_str(), sw, sh, (unsigned)((size_t)sw*sh*2), psramFound());
+    free(jbuf); drawIconPlaceholder(name, x, y, bg); return;
+  }
 
   g_dec = {sbuf, sw, sh};
   TJpgDec.setJpgScale(dec_scale);
@@ -261,7 +283,11 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
   free(jbuf);
   g_dec.px = nullptr;
 
-  if (rc != 0) { free(sbuf); tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_RED); return; }
+  if (rc != 0) {
+    Serial.printf("[ICON] %s drawJpg rc=%d (jw=%u jh=%u dec_scale=%u sw=%d sh=%d)\n",
+                   name.c_str(), rc, jw, jh, dec_scale, sw, sh);
+    free(sbuf); drawIconPlaceholder(name, x, y, bg); return;
+  }
 
   uint16_t* dbuf = (uint16_t*) malloc((size_t)ICON_SIZE_PX * ICON_SIZE_PX * 2);
   if (!dbuf) { free(sbuf); return; }
@@ -300,10 +326,12 @@ void drawItemRow(int index, int y) {
   tft.setTextColor(TFT_CYAN, bg);
   tft.drawString(g_items[index].quantity, text_right, text_cy);
 
-  if (g_items[index].expiry.length() > 0) {
+  if (g_items[index].expiry.length() == 10) {
+    const String& e = g_items[index].expiry;  // "YYYY-MM-DD"
+    String ddmmyyyy = e.substring(8, 10) + "-" + e.substring(5, 7) + "-" + e.substring(0, 4);
     tft.setTextSize(1);
     tft.setTextColor(TFT_ORANGE, bg);
-    tft.drawString("Exp " + g_items[index].expiry, text_right, text_cy + 14);
+    tft.drawString("Exp " + ddmmyyyy, text_right, text_cy + 14);
   }
 
   // Tappable "open details" arrow, right edge of the row.

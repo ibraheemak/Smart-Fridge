@@ -269,11 +269,19 @@ void saveExpiry() {
     String(FIREBASE_PROJECT_ID) +
     "/databases/(default)/documents/fridges/" +
     String(FRIDGE_ID) +
-    "/inventory/current?updateMask.fieldPaths=items&key=" +
+    "/inventory/current?key=" +
     String(FIREBASE_API_KEY);
 
   DynamicJsonDocument doc(8192);
-  JsonArray values = doc["fields"]["items"]["arrayValue"]["values"].to<JsonArray>();
+  JsonObject fields = doc["fields"].to<JsonObject>();
+
+  time_t now = time(nullptr);
+  char ts[20];
+  strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
+  fields["updatedAt"]["stringValue"] = ts;
+  fields["source"]["stringValue"]    = "ESP32-CH";
+
+  JsonArray values = fields["items"]["arrayValue"]["values"].to<JsonArray>();
   for (int i = 0; i < g_item_count; i++) {
     JsonObject mf = values.createNestedObject()["mapValue"]["fields"].to<JsonObject>();
     mf["name"]["stringValue"]       = g_items[i].name;
