@@ -68,9 +68,24 @@
 // ----------------------------------------------------------------------------
 #define HEADER_HEIGHT_PX    40
 #define FOOTER_HEIGHT_PX    24
-#define ROW_HEIGHT_PX       56
+#define ROW_HEIGHT_PX       76
+#define ROW_GAP_PX           6   // visual gap between item rows
+#define ROW_TAP_DEADZONE_PX  2   // touch dead zone near row borders (keep small — a
+                                  // larger value rejects taps across most of the row
+                                  // when calibration is slightly skewed)
+#define ROW_ARROW_ZONE_PX   60   // width of the tappable "open details" arrow area
+                                  // on the right edge of each item row
+#define TOP_ROW_HIT_EXTEND_PX 40 // extend row 0's tap zone up into the header to
+                                  // compensate for touch y-readings being low near
+                                  // the top edge of the panel
 #define SIDE_PADDING_PX     12
 #define MAX_ITEMS_DISPLAYED  32
+
+// ----------------------------------------------------------------------------
+// TOUCH (XPT2046)
+// ----------------------------------------------------------------------------
+#define TOUCH_DEBOUNCE_MS   300   // min ms between accepted touch events
+#define TOUCH_PRESSURE_THRESHOLD  200   // lower = lighter taps register (TFT_eSPI default is 600)
 
 // ----------------------------------------------------------------------------
 // FIREBASE STORAGE — item icons

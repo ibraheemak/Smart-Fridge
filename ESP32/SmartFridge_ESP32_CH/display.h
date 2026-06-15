@@ -1,5 +1,12 @@
 #pragma once
 
+// Force TFT_eSPI to use this sketch's own pin/touch config (tft_setup.h)
+// instead of the library's globally-installed User_Setup.h, which is set up
+// for the CAM board (TFT_CS=-1, TFT_RST=-1, no TOUCH_CS at all). Without this,
+// touch is silently compiled out.
+#define USER_SETUP_LOADED
+#include "tft_setup.h"
+
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
 #include <HTTPClient.h>
@@ -20,6 +27,7 @@ struct InventoryItem {
   String name;
   String quantity;
   String confidence;
+  String expiry;  // "YYYY-MM-DD" or "" if not set
 };
 
 InventoryItem g_items[MAX_ITEMS_DISPLAYED];
@@ -268,23 +276,43 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
 // ============================================================================
 void drawItemRow(int index, int y) {
   int w = tft.width();
+  int rowH = ROW_HEIGHT_PX - ROW_GAP_PX;
   uint16_t bg = (index % 2 == 0) ? TFT_BLACK : 0x18E3;
-  tft.fillRect(0, y, w, ROW_HEIGHT_PX, bg);
-  tft.fillRect(0, y, 4, ROW_HEIGHT_PX, confidenceColor(g_items[index].confidence));
+
+  // Gap below the row (between this row and the next) stays plain black.
+  tft.fillRect(0, y, w, ROW_HEIGHT_PX, TFT_BLACK);
+  tft.fillRect(0, y, w, rowH, bg);
+  tft.fillRect(0, y, 4, rowH, confidenceColor(g_items[index].confidence));
 
   int icon_x = SIDE_PADDING_PX;
-  int icon_y = y + (ROW_HEIGHT_PX - ICON_SIZE_PX) / 2;
+  int icon_y = y + (rowH - ICON_SIZE_PX) / 2;
   drawIcon(g_items[index].name, icon_x, icon_y, bg);
 
-  int text_x  = icon_x + ICON_SIZE_PX + 10;
-  int text_cy = y + ROW_HEIGHT_PX / 2;
+  int arrow_x   = w - ROW_ARROW_ZONE_PX;
+  int text_x    = icon_x + ICON_SIZE_PX + 10;
+  int text_right = arrow_x - 4;
+  int text_cy   = y + rowH / 2;
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_WHITE, bg);
   tft.setTextSize(2);
   tft.drawString(g_items[index].name, text_x, text_cy);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(TFT_CYAN, bg);
-  tft.drawString(g_items[index].quantity, w - SIDE_PADDING_PX, text_cy);
+  tft.drawString(g_items[index].quantity, text_right, text_cy);
+
+  if (g_items[index].expiry.length() > 0) {
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_ORANGE, bg);
+    tft.drawString("Exp " + g_items[index].expiry, text_right, text_cy + 14);
+  }
+
+  // Tappable "open details" arrow, right edge of the row.
+  tft.drawFastVLine(arrow_x, y + 6, rowH - 12, TFT_DARKGREY);
+  int ax = arrow_x + (ROW_ARROW_ZONE_PX - 18) / 2;
+  int ay = y + rowH / 2;
+  tft.fillTriangle(ax, ay - 12, ax, ay + 12, ax + 18, ay, TFT_LIGHTGREY);
+
+  tft.drawRect(0, y, w, rowH, TFT_DARKGREY);
 }
 
 void drawEmptyState() {

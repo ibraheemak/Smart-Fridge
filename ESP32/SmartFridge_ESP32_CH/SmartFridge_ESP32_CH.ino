@@ -22,6 +22,7 @@
 #include "SECRETS.h"
 #include "parameters.h"
 #include "display.h"
+#include "touch.h"
 #include "dht11.h"
 
 // ============================================================================
@@ -85,6 +86,7 @@ bool fetchInventory() {
     g_items[g_item_count].name       = mf["name"]["stringValue"].as<String>();
     g_items[g_item_count].quantity   = mf["quantity"]["stringValue"].as<String>();
     g_items[g_item_count].confidence = mf["confidence"]["stringValue"].as<String>();
+    g_items[g_item_count].expiry     = mf["expiry"]["stringValue"].as<String>();
     g_item_count++;
   }
 
@@ -150,6 +152,7 @@ void setup() {
   TJpgDec.setSwapBytes(true);
 
   showStatus("Smart Fridge", "Booting...");
+  initTouch();
   checkResetButton();
   initWiFi();
   configureTime();
@@ -178,11 +181,12 @@ void loop() {
       String sig = buildSignature();
       if (sig != g_last_signature) {
         g_last_signature = sig;
-        renderInventory();
+        if (g_view == VIEW_LIST) renderInventory();
       }
     }
   }
 
+  handleTouch();
   tickDHT11();
   delay(50);
 }
