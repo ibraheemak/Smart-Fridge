@@ -125,6 +125,10 @@ bool saveTemperature(float tempC, float humidity) {
 
 bool saveScanHistory(JsonDocument& items_doc) {
   if (!items_doc.containsKey("items")) return false;
+  if (items_doc["items"].as<JsonArray>().size() == 0) {
+    Serial.println("[FIREBASE] scan skipped — no items detected");
+    return false;
+  }
 
   DynamicJsonDocument doc(6144);
   JsonObject fields = doc.createNestedObject("fields");
