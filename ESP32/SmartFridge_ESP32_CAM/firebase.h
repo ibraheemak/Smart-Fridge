@@ -66,8 +66,66 @@ String fetchBasicItems() {
 // ============================================================================
 // Firestore write
 // ============================================================================
+
+// Fetch the existing expiries array for a named item from the current
+// inventory document. Returns a comma-separated list of "YYYY-MM-DD" strings
+// (or empty string if none exist). Used so a new scan doesn't wipe dates the
+// user already entered.
+String fetchExistingExpiries(const String& item_name) {
+  String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+               "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
+               "/inventory/current?key=" + String(FIREBASE_API_KEY);
+  HTTPClient http;
+  http.begin(url);
+  int code = http.GET();
+  if (code != 200) { http.end(); return ""; }
+  String body = http.getString();
+  http.end();
+
+  DynamicJsonDocument doc(8192);
+  if (deserializeJson(doc, body)) return "";
+
+  JsonArray existing = doc["fields"]["items"]["arrayValue"]["values"];
+  for (JsonObject v : existing) {
+    JsonObject mf = v["mapValue"]["fields"];
+    String name = mf["name"]["stringValue"].as<String>();
+    if (!name.equalsIgnoreCase(item_name)) continue;
+
+    // Found matching item — collect its expiries.
+    String result = "";
+    JsonArray ea = mf["expiries"]["arrayValue"]["values"];
+    for (JsonObject ev : ea) {
+      String d = ev["stringValue"].as<String>();
+      if (result.length()) result += ",";
+      result += d;
+    }
+    // Backward-compat: single legacy "expiry" field.
+    if (result.length() == 0) {
+      String legacy = mf["expiry"]["stringValue"].as<String>();
+      if (legacy.length() == 10) result = legacy;
+    }
+    return result;
+  }
+  return "";
+}
+
 bool saveToFirebase(JsonDocument& items_doc) {
   if (!items_doc.containsKey("items") || WiFi.status() != WL_CONNECTED) return false;
+
+  // First, read the whole current document once so we can preserve expiries.
+  String cur_url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+                   "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
+                   "/inventory/current?key=" + String(FIREBASE_API_KEY);
+  DynamicJsonDocument cur_doc(8192);
+  bool has_existing = false;
+  {
+    HTTPClient http;
+    http.begin(cur_url);
+    if (http.GET() == 200) {
+      has_existing = !deserializeJson(cur_doc, http.getString());
+    }
+    http.end();
+  }
 
   StaticJsonDocument<4096> doc;
   JsonObject fields = doc.createNestedObject("fields");
@@ -76,19 +134,35 @@ bool saveToFirebase(JsonDocument& items_doc) {
 
   JsonArray values = fields["items"]["arrayValue"].createNestedArray("values");
   for (JsonObject item : items_doc["items"].as<JsonArray>()) {
+    String item_name = item["name"].as<String>();
     JsonObject mf = values.createNestedObject()["mapValue"].createNestedObject("fields");
-    mf["name"]["stringValue"]       = item["name"].as<String>();
+    mf["name"]["stringValue"]       = item_name;
     mf["quantity"]["stringValue"]   = item["quantity"].as<String>();
     mf["confidence"]["stringValue"] = item["confidence"].as<String>();
+
+    // Preserve any expiry dates the user already entered for this item.
+    if (has_existing) {
+      JsonArray existing_items = cur_doc["fields"]["items"]["arrayValue"]["values"];
+      for (JsonObject ev : existing_items) {
+        JsonObject emf = ev["mapValue"]["fields"];
+        if (!String(emf["name"]["stringValue"].as<String>()).equalsIgnoreCase(item_name)) continue;
+
+        // Copy expiries array.
+        JsonArray ea = emf["expiries"]["arrayValue"]["values"];
+        if (ea.size() > 0) {
+          JsonArray out_ea = mf["expiries"]["arrayValue"].createNestedArray("values");
+          for (JsonObject ed : ea)
+            out_ea.createNestedObject()["stringValue"] = ed["stringValue"].as<String>();
+        }
+        break;
+      }
+    }
   }
 
   String payload;
   serializeJson(doc, payload);
-  String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
-               "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
-               "/inventory/current?key=" + String(FIREBASE_API_KEY);
   HTTPClient http;
-  http.begin(url);
+  http.begin(cur_url);
   http.addHeader("Content-Type", "application/json");
   int code = http.PATCH(payload);
   http.end();
