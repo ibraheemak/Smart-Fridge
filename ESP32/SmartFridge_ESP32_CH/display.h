@@ -23,11 +23,15 @@ TFT_eSPI tft = TFT_eSPI();
 // ============================================================================
 // Inventory data — written by Firebase fetch, read by draw functions
 // ============================================================================
+// Maximum number of expiry dates stored per item (one per unit).
+#define MAX_EXPIRIES_PER_ITEM 20
+
 struct InventoryItem {
   String name;
   String quantity;
   String confidence;
-  String expiry;  // "YYYY-MM-DD" or "" if not set
+  String expiries[MAX_EXPIRIES_PER_ITEM];  // one per unit, "YYYY-MM-DD" or ""
+  int    expiry_count;                      // how many slots are filled
 };
 
 InventoryItem g_items[MAX_ITEMS_DISPLAYED];
@@ -326,9 +330,15 @@ void drawItemRow(int index, int y) {
   tft.setTextColor(TFT_CYAN, bg);
   tft.drawString(g_items[index].quantity, text_right, text_cy);
 
-  if (g_items[index].expiry.length() == 10) {
-    const String& e = g_items[index].expiry;  // "YYYY-MM-DD"
-    String ddmmyyyy = e.substring(8, 10) + "-" + e.substring(5, 7) + "-" + e.substring(0, 4);
+  // Show the earliest expiry date among all units.
+  String earliest = "";
+  for (int j = 0; j < g_items[index].expiry_count; j++) {
+    const String& e = g_items[index].expiries[j];
+    if (e.length() == 10 && (earliest == "" || e < earliest))
+      earliest = e;
+  }
+  if (earliest.length() == 10) {
+    String ddmmyyyy = earliest.substring(8, 10) + "-" + earliest.substring(5, 7) + "-" + earliest.substring(0, 4);
     tft.setTextSize(1);
     tft.setTextColor(TFT_ORANGE, bg);
     tft.drawString("Exp " + ddmmyyyy, text_right, text_cy + 14);
