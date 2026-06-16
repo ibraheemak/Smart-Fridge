@@ -59,6 +59,11 @@ void enqueuePendingExpiry(int item_idx, int expiry_idx) {
 // Declared here; defined below after drawNewItemScreen.
 void processNextPending();
 
+// Returns the expiry_index currently being edited for VIEW_NEW_ITEM / VIEW_DETAIL.
+int currentExpiryIndex() {
+  return g_pending[MAX_PENDING - 1].expiry_index;
+}
+
 // ----------------------------------------------------------------------------
 // Touch calibration (stored in NVS so it persists across reboots)
 // ----------------------------------------------------------------------------
@@ -330,11 +335,6 @@ void processNextPending() {
   // Store which expiry slot we're about to fill (reuse g_pending[MAX_PENDING-1] as temp).
   // We embed it in a dedicated variable instead:
   g_pending[MAX_PENDING - 1] = {g_detail_index, expiry_idx};  // temp slot
-}
-
-// Returns the expiry_index currently being edited for VIEW_NEW_ITEM / VIEW_DETAIL.
-int currentExpiryIndex() {
-  return g_pending[MAX_PENDING - 1].expiry_index;
 }
 
 // Open the detail/expiry-editor for item[idx], editing expiry slot [expiry_idx].
