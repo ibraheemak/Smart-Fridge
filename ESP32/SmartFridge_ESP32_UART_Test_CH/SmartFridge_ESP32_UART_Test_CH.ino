@@ -1,36 +1,71 @@
 /*
- * UART Test — ESP32-CH (sender)
+ * UART + Hall Sensor Test — ESP32-CH (sender)
  *
- * Sends "PING\n" over Serial2 every 2 seconds. One-way only — no reply expected.
- * This is the first step toward CH→CAM door-trigger messaging.
+ * Reads the hall effect door sensor. When the door closes, sends
+ * "SCAN_TRIGGER\n" over Serial2 to the CAM board.
  *
- * Wiring (2 wires only):
- *   CH GPIO 17 (TX2) ──────────► CAM GPIO 14 (RX2)
+ * Wiring — UART (2 wires):
+ *   CH GPIO 17 (TX2) ──────────► CAM GPIO 13 (RX)
  *   CH GND           ─────────── CAM GND
  *
- * Both boards must share GND. No level shifter needed — both run at 3.3V.
+ * Wiring — Hall sensor (3 wires):
+ *   Hall VCC  → 3.3V
+ *   Hall GND  → GND
+ *   Hall DO   → GPIO 25
+ *
+ * Hall logic: LOW = magnet present = door CLOSED
+ *             HIGH = no magnet     = door OPEN
  */
 
-#define UART_TX_PIN  17   // CH TX → CAM RX (GPIO 14)
-#define UART_BAUD    9600
+#define UART_TX_PIN        17
+#define UART_RX_PIN        16   // not connected — declared to avoid Serial2 crash with -1
+#define UART_BAUD          9600
 
-#define PING_INTERVAL_MS  2000
+#define HALL_PIN           25     // free pin, no conflicts on CH devkit
+#define DOOR_CLOSED_LEVEL  LOW
+#define DOOR_DEBOUNCE_MS   50
+#define DOOR_SETTLE_MS     1500   // wait after close before triggering scan
 
-static unsigned long lastPingMs = 0;
+// -- debounce state --
+static int           doorState    = HIGH;
+static int           doorReading  = HIGH;
+static unsigned long doorChangeMs = 0;
+
+// Returns true exactly once per OPEN→CLOSED transition (debounced).
+bool doorJustClosed() {
+  int reading = digitalRead(HALL_PIN);
+
+  if (reading != doorReading) {
+    doorReading  = reading;
+    doorChangeMs = millis();
+  }
+
+  if ((millis() - doorChangeMs) >= DOOR_DEBOUNCE_MS && reading != doorState) {
+    int prev  = doorState;
+    doorState = reading;
+    if (prev != DOOR_CLOSED_LEVEL && doorState == DOOR_CLOSED_LEVEL)
+      return true;
+  }
+  return false;
+}
 
 void setup() {
   Serial.begin(115200);
-  // RX pin set to -1 — we only transmit, no receive
-  Serial2.begin(UART_BAUD, SERIAL_8N1, -1, UART_TX_PIN);
-  Serial.println("[CH] UART test started — sending PING every 2 s");
+  Serial2.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
+
+  pinMode(HALL_PIN, INPUT_PULLUP);
+  doorState   = digitalRead(HALL_PIN);
+  doorReading = doorState;
+
+  Serial.printf("[CH] Ready — door is %s\n",
+                doorState == DOOR_CLOSED_LEVEL ? "CLOSED" : "OPEN");
 }
 
 void loop() {
-  unsigned long now = millis();
-
-  if (now - lastPingMs >= PING_INTERVAL_MS) {
-    lastPingMs = now;
-    Serial2.println("PING");
-    Serial.println("[CH] >> PING sent");
+  if (doorJustClosed()) {
+    Serial.println("[CH] Door closed — waiting settle time...");
+    delay(DOOR_SETTLE_MS);
+    Serial2.println("SCAN_TRIGGER");
+    Serial.println("[CH] >> SCAN_TRIGGER sent");
   }
 }
