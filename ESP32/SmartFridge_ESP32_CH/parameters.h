@@ -54,6 +54,22 @@
 #define RESET_HOLD_MS        3000
 
 // ----------------------------------------------------------------------------
+// HALL EFFECT DOOR SENSOR (US #10) — moved here from the CAM board
+// ----------------------------------------------------------------------------
+// 3-pin digital module. Hall DO -> GPIO 25. Magnet near = door closed.
+#define HALL_PIN               25
+#define DOOR_CLOSED_LEVEL      LOW    // LOW = magnet near = door closed
+#define DOOR_DEBOUNCE_MS       50     // require a stable reading this long
+#define DOOR_SETTLE_MS       1500     // wait after close before triggering scan
+
+// ----------------------------------------------------------------------------
+// UART LINK TO CAM BOARD — sends SCAN_TRIGGER on door close
+// ----------------------------------------------------------------------------
+#define UART_TX_PIN            17     // CH TX2 -> CAM GPIO 13 (RX)
+#define UART_RX_PIN            16     // unused — CAM never replies
+#define UART_BAUD             9600
+
+// ----------------------------------------------------------------------------
 // REFRESH
 // ----------------------------------------------------------------------------
 #define INVENTORY_POLL_INTERVAL_MS  15000   // poll Firestore every 15 s

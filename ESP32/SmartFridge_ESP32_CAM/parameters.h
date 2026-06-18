@@ -51,15 +51,15 @@
 #define LED_BRIGHTNESS     200
 
 // ----------------------------------------------------------------------------
-// DOOR SENSOR (hall effect, US #10) — wired to the ESP32-CAM board
+// UART LINK TO CH BOARD (US #10) — receives SCAN_TRIGGER on door close
 // ----------------------------------------------------------------------------
-// GPIO 13 chosen deliberately: it is free (TFT moved to the CH board) and is
-// NOT a boot-strapping pin. Do NOT use GPIO 12 here — it selects flash voltage
-// at boot; a HIGH (door open) at power-on can stop the CAM from booting.
-#define DOOR_SENSOR_PIN        13     // free pin, INPUT_PULLUP, no strapping issues
-#define DOOR_CLOSED_LEVEL      LOW    // LOW = magnet near = door closed
-#define DOOR_DEBOUNCE_MS       50     // require a stable reading this long
-#define DOOR_SETTLE_MS       1500     // wait after close before capturing
+// The hall door sensor now lives on the CH board. GPIO 13 here is the old
+// door-sensor pin, repurposed as the UART RX line — it is free (TFT moved to
+// the CH board) and is NOT a boot-strapping pin. Do NOT use GPIO 12 here — it
+// selects flash voltage at boot; an externally-driven HIGH at power-on can
+// stop the CAM from booting.
+#define UART_RX_PIN            13     // CAM RX <- CH GPIO 17 (TX2)
+#define UART_BAUD             9600
 
 // ----------------------------------------------------------------------------
 // DHT11 TEMPERATURE / HUMIDITY SENSOR (US #8, #9)

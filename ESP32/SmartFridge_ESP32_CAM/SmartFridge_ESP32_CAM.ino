@@ -29,7 +29,7 @@
 #include "firebase.h"
 #include "gemini.h"
 #include "led_strip.h"
-#include "door.h"
+#include "uart_link.h"
 #include "temperature.h"
 
 // ============================================================================
@@ -183,11 +183,10 @@ void processSerialCommand(String cmd) {
   else if (cmd == "LED OFF")   ledStripOff();
   else if (cmd == "TEMP")      readAndPublishTemperature();
   else if (cmd == "STATUS")
-    Serial.printf("[STATUS] WiFi: %s  IP: %s  Heap: %u  Door: %s\n",
+    Serial.printf("[STATUS] WiFi: %s  IP: %s  Heap: %u\n",
                   WiFi.status() == WL_CONNECTED ? "OK" : "DISCONNECTED",
                   WiFi.localIP().toString().c_str(),
-                  (unsigned)ESP.getFreeHeap(),
-                  doorIsClosed() ? "CLOSED" : "OPEN");
+                  (unsigned)ESP.getFreeHeap());
   else if (cmd == "WIFIRESET") { WiFiManager wm; wm.resetSettings(); ESP.restart(); }
   else if (cmd == "HELP")      printHelp();
   else if (cmd.length() > 0)   Serial.printf("[CMD] Unknown: %s\n", cmd.c_str());
@@ -208,7 +207,7 @@ void setup() {
   initFlash();
   initCamera();
   initLEDStrip();
-  initDoorSensor();
+  initUartLink();
   initTempSensor();
 
   webServer.on("/latest.jpg", HTTP_GET, handleLatestJpeg);
@@ -232,9 +231,8 @@ void loop() {
     readAndPublishTemperature();
   }
 
-  if (doorJustClosed()) {
-    Serial.println("[DOOR] Closed — auto scan");
-    delay(DOOR_SETTLE_MS);          // let door seal + items settle
+  if (uartScanTriggerReceived()) {
+    Serial.println("[UART] SCAN_TRIGGER received — auto scan");
     captureAndProcess();            // existing scan flow
   }
 

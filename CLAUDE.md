@@ -2,16 +2,34 @@
 
 ## Two-board architecture (IMPORTANT)
 
-The system runs on **two separate ESP32 boards** that talk only through Firestore:
+The system runs on **two separate ESP32 boards**. Most data flows through Firestore,
+but the door-close scan trigger flows over a direct **UART link** (see below).
 
 | Board | Sketch folder | Responsibility |
 |---|---|---|
-| **ESP32-CAM** (AI Thinker) | `SmartFridge_ESP32_CAM` | Camera → Gemini AI → Firestore, WS2811 LED strip, **hall door sensor** |
-| **ESP32 devkit** (CH9102 USB) | `SmartFridge_ESP32_CH` | ILI9488 TFT + XPT2046 touch, polls Firestore and renders inventory |
+| **ESP32-CAM** (AI Thinker) | `SmartFridge_ESP32_CAM` | Camera → Gemini AI → Firestore, WS2811 LED strip, receives `SCAN_TRIGGER` over UART |
+| **ESP32 devkit** (CH9102 USB) | `SmartFridge_ESP32_CH` | ILI9488 TFT + XPT2046 touch, polls Firestore and renders inventory, **hall door sensor**, sends `SCAN_TRIGGER` over UART |
 
 > The TFT display used to live on the CAM board (old `SmartFridge_ESP32_Combined`,
 > now removed). It now runs on the separate CH devkit, which **freed GPIO 12/13/14
 > on the CAM board** for sensors.
+>
+> The hall door sensor used to live on the CAM board too. It has since **moved to
+> the CH board** — the CAM's GPIO 13 is now the UART RX pin for the CH→CAM link.
+> See `feature/uart-ch-cam`.
+
+## UART link — CH → CAM (door-close scan trigger)
+
+One-way, 2-wire link. CH detects door close (hall sensor) and sends a
+`SCAN_TRIGGER\n` command; CAM receives it and calls `captureAndProcess()`.
+
+```
+CH  GPIO 17 (TX2) ──────────► CAM GPIO 13 (RX, Serial2)
+CH  GND           ─────────── CAM GND
+```
+
+Baud: 9600. Implementation: `uart_link.h` on both boards (`uartSendScanTrigger()`
+on CH, `uartScanTriggerReceived()` on CAM).
 
 ## What's already working (DO NOT break)
 
@@ -21,7 +39,7 @@ The system runs on **two separate ESP32 boards** that talk only through Firestor
 | WS2811 LED strip (GPIO 2) | CAM `SmartFridge_ESP32_CAM` | ✅ Working |
 | WiFi + Firebase Firestore | both boards | ✅ Working |
 | Gemini AI food recognition | CAM `SmartFridge_ESP32_CAM` | ✅ Working |
-| Hall door sensor → auto scan | CAM `SmartFridge_ESP32_CAM` | ✅ Working (US #10) |
+| Hall door sensor → UART → auto scan | CH → CAM (`uart_link.h`) | ✅ Working (US #10) |
 | ILI9488 TFT display (480×320) | CH `SmartFridge_ESP32_CH` | ✅ Working |
 | Inventory display on screen | CH `SmartFridge_ESP32_CH` | ✅ Working |
 
@@ -35,7 +53,7 @@ GPIO  2  — WS2811 LED strip data ← OCCUPIED
 GPIO  4  — Camera flash PWM       ← OCCUPIED
 GPIO  5  — Camera Y2
 GPIO 12  — free ✅  ⚠️ strapping (flash-voltage select) — do NOT use for an input that can be HIGH at boot
-GPIO 13  — Hall door sensor OUT   ← OCCUPIED (US #10 — door-close auto scan)
+GPIO 13  — UART RX (Serial2)      ← OCCUPIED (CH→CAM SCAN_TRIGGER link, see uart_link.h)
 GPIO 14  — free ✅
 GPIO 15  — free ✅  ⚠️ strapping — silences boot log if LOW at boot (cosmetic)
 GPIO 16  — free ✅ (verify per board: PSRAM CS on some CAM revisions)
@@ -68,10 +86,13 @@ GPIO 39  — Camera Y7 (input only)
 ```
 GPIO  4  — TFT RST
 GPIO  5  — Touch CS (XPT2046)
+GPIO 17  — UART TX2 (Serial2) ← CH→CAM SCAN_TRIGGER link, see uart_link.h
 GPIO 18  — TFT SCK + Touch CLK (shared)
 GPIO 19  — Touch DO (MISO)
 GPIO 23  — TFT MOSI + Touch DIN (shared)
+GPIO 25  — Hall door sensor DO   (US #10 — door-close auto scan, see door.h)
 GPIO 27  — TFT DC/RS
+GPIO 33  — DHT11 data
 ```
 > The CH board is a standard ESP32 devkit, so it has many more free pins than the
 > CAM. Sensors that conflict with the camera bus can live here instead.
@@ -109,11 +130,13 @@ main
 ESP32-CAM board  (SmartFridge_ESP32_CAM)
     ├── Camera → Gemini AI → Firestore (cloud)
     ├── LED strip (illumination during scan)
-    ├── Hall door sensor (GPIO 13) → door close auto-triggers a scan
+    ├── UART RX (GPIO 13) ← receives SCAN_TRIGGER from CH, auto-triggers a scan
     └── [TODO] more sensors below
 
 ESP32 devkit board  (SmartFridge_ESP32_CH)
-    └── TFT display + touch ← polls Firestore inventory/current
+    ├── TFT display + touch ← polls Firestore inventory/current
+    ├── Hall door sensor (GPIO 25) → door close → sends SCAN_TRIGGER over UART
+    └── UART TX (GPIO 17) → CAM GPIO 13
 
 Firestore (Firebase)
     ├── fridges/fridge1/inventory/current   ← live inventory
@@ -168,20 +191,21 @@ DHT11 DATA → GPIO 33   (free pin)
 Library: `DHT sensor library` by Adafruit
 
 ### Hall Effect Sensor — Door Detection (US #10) ✅ DONE
-4-pin digital hall module, wired to the **CAM board**:
+4-pin digital hall module, wired to the **CH board**:
 ```
-Hall VCC  → 5V
+Hall VCC  → 3.3V
 Hall GND  → GND
-Hall DO   → GPIO 13   (digital out; free, no strapping issues, INPUT_PULLUP)
+Hall DO   → GPIO 25   (digital out; free, no strapping issues, INPUT_PULLUP)
 Hall AO   → not connected
 ```
 Logic: LOW = magnet present (door closed), HIGH = door open.
-- ⚠️ Do NOT use GPIO 12 — it is the flash-voltage strapping pin; HIGH (door open)
-  at power-on can stop the CAM from booting.
 - Tune the module's pot so DO toggles cleanly at the door gap.
-- Implementation: `door.h` (debounced edge detector) + `parameters.h`
-  (`DOOR_SENSOR_PIN`, `DOOR_SETTLE_MS`). Door close → `captureAndProcess()`.
-- Isolated tester: `ESP32/SmartFridge_ESP32_HallSensor/`.
+- Implementation: `door.h` on the CH board (debounced edge detector) +
+  `parameters.h` (`HALL_PIN`, `DOOR_SETTLE_MS`). Door close → waits the
+  settle time → `uartSendScanTrigger()` sends `SCAN_TRIGGER` to the CAM over
+  UART (see `uart_link.h` on both boards).
+- Isolated tester: `ESP32/SmartFridge_ESP32_UART_Test_CH/` +
+  `ESP32/SmartFridge_ESP32_UART_Test_CAM/`.
 
 ### HX711 + Load Cell — Weight Detection (US #1, #4)
 ```

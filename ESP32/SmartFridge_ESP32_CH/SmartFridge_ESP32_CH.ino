@@ -24,6 +24,8 @@
 #include "display.h"
 #include "touch.h"
 #include "dht11.h"
+#include "door.h"
+#include "uart_link.h"
 
 // ============================================================================
 // STATE
@@ -157,6 +159,8 @@ void setup() {
   initWiFi();
   configureTime();
   initDHT11();
+  initDoorSensor();
+  initUartLink();
 
   showStatus("Loading inventory", "");
   if (fetchInventory()) {
@@ -188,5 +192,12 @@ void loop() {
 
   handleTouch();
   tickDHT11();
+
+  if (doorJustClosed()) {
+    Serial.println("[DOOR] Closed — triggering CAM scan");
+    delay(DOOR_SETTLE_MS);          // let door seal + items settle
+    uartSendScanTrigger();
+  }
+
   delay(50);
 }
