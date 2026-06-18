@@ -22,6 +22,7 @@
 #include "SECRETS.h"
 #include "parameters.h"
 #include "display.h"
+#include "stats.h"
 #include "touch.h"
 #include "dht11.h"
 

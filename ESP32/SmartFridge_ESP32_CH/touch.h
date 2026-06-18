@@ -26,7 +26,7 @@
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM };
+enum ViewState { VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS };
 
 ViewState     g_view          = VIEW_LIST;
 int           g_detail_index  = -1;
@@ -471,7 +471,24 @@ void handleTouch() {
 
   Serial.printf("[TOUCH] x=%d y=%d (corrected) view=%d\n", tx, ty, g_view);
 
+  // VIEW_STATS — tap anywhere in footer to go back.
+  if (g_view == VIEW_STATS) {
+    int footer_y = tft.height() - FOOTER_HEIGHT_PX;
+    if ((int)ty >= footer_y) { g_view = VIEW_LIST; renderInventory(); }
+    return;
+  }
+
   if (g_view == VIEW_LIST) {
+    // Tap the footer "📊 This Month" button to open stats.
+    int footer_y = tft.height() - FOOTER_HEIGHT_PX;
+    if ((int)ty >= footer_y) {
+      g_view = VIEW_STATS;
+      showStatus("Loading stats...", "");
+      fetchConsumedStats();
+      renderStatsScreen();
+      return;
+    }
+
     int list_top    = HEADER_HEIGHT_PX + 4;
     int list_bottom = tft.height() - FOOTER_HEIGHT_PX - 4;
 

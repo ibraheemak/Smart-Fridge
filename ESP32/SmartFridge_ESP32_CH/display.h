@@ -383,7 +383,16 @@ void renderInventory() {
     }
   }
 
-  drawFooter(g_updated_at.length() > 0
-               ? "Updated " + g_updated_at
-               : "Waiting for first scan...");
+  // Footer doubles as a "This Month" stats button.
+  int w2 = tft.width();
+  int fy = tft.height() - FOOTER_HEIGHT_PX;
+  tft.fillRect(0, fy, w2, FOOTER_HEIGHT_PX, TFT_DARKGREY);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
+  tft.setTextSize(1);
+  String upd = g_updated_at.length() > 0 ? "Updated " + g_updated_at : "Waiting for scan...";
+  tft.drawString(upd, SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_DARKGREY);
+  tft.drawString("This Month >", w2 - SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
 }
