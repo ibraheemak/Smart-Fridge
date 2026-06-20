@@ -24,7 +24,6 @@
 #include "display.h"
 #include "stats.h"
 #include "touch.h"
-#include "dht11.h"
 
 // ============================================================================
 // STATE
@@ -128,37 +127,39 @@ bool fetchInventory() {
 
   Serial.printf("[FIREBASE] %d items, updatedAt=%s\n", g_item_count, g_updated_at.c_str());
 
-  // Detect new units and enqueue expiry prompts — skip on very first fetch.
-  if (g_prev_initialized) {
-    for (int i = 0; i < g_item_count; i++) {
-      InventoryItem& it = g_items[i];
-      // Find matching item in previous snapshot.
-      int prev_expiry_count = 0;
-      bool found = false;
-      for (int j = 0; j < g_prev_item_count; j++) {
-        if (g_prev_items[j].name.equalsIgnoreCase(it.name)) {
-          prev_expiry_count = g_prev_items[j].expiry_count;
-          found = true;
-          break;
-        }
-      }
-      // New units = slots that didn't exist before and have no date yet.
-      int start = found ? prev_expiry_count : 0;
-      // Parse quantity to estimate how many units there are now.
-      int qty = it.quantity.toInt();
-      if (qty <= 0) qty = it.expiry_count > 0 ? it.expiry_count : 1;
-      // Clamp to array bounds.
-      if (qty > MAX_EXPIRIES_PER_ITEM) qty = MAX_EXPIRIES_PER_ITEM;
-      // Grow expiry_count to match quantity (new slots start empty).
-      while (it.expiry_count < qty) it.expiries[it.expiry_count++] = "";
-      // Enqueue any new empty slots.
-      for (int s = start; s < it.expiry_count; s++) {
-        if (it.expiries[s].length() == 0)
-          enqueuePendingExpiry(i, s);
+  // Detect units that still need an expiry date and enqueue prompts for them.
+  // g_prev_item_count is 0 on the very first fetch (incl. right after a reboot),
+  // so every item is treated as "found = false" and any empty expiry slot is
+  // enqueued — this also re-prompts for units that were never dated before a
+  // restart, instead of silently adopting them as the baseline.
+  for (int i = 0; i < g_item_count; i++) {
+    InventoryItem& it = g_items[i];
+    // Find matching item in previous snapshot.
+    int prev_expiry_count = 0;
+    bool found = false;
+    for (int j = 0; j < g_prev_item_count; j++) {
+      if (g_prev_items[j].name.equalsIgnoreCase(it.name)) {
+        prev_expiry_count = g_prev_items[j].expiry_count;
+        found = true;
+        break;
       }
     }
-    if (g_pending_count > 0) processNextPending();
+    // New units = slots that didn't exist before and have no date yet.
+    int start = found ? prev_expiry_count : 0;
+    // Parse quantity to estimate how many units there are now.
+    int qty = it.quantity.toInt();
+    if (qty <= 0) qty = it.expiry_count > 0 ? it.expiry_count : 1;
+    // Clamp to array bounds.
+    if (qty > MAX_EXPIRIES_PER_ITEM) qty = MAX_EXPIRIES_PER_ITEM;
+    // Grow expiry_count to match quantity (new slots start empty).
+    while (it.expiry_count < qty) it.expiries[it.expiry_count++] = "";
+    // Enqueue any new empty slots.
+    for (int s = start; s < it.expiry_count; s++) {
+      if (it.expiries[s].length() == 0)
+        enqueuePendingExpiry(i, s);
+    }
   }
+  if (g_pending_count > 0) processNextPending();
 
   g_prev_initialized = true;
   return true;
@@ -226,12 +227,12 @@ void setup() {
   checkResetButton();
   initWiFi();
   configureTime();
-  initDHT11();
 
   showStatus("Loading inventory", "");
   if (fetchInventory()) {
     g_last_signature = buildSignature();
-    renderInventory();
+    // Don't overwrite the new-item prompt that fetchInventory() may have just drawn.
+    if (g_view == VIEW_LIST) renderInventory();
   } else {
     showStatus("No data yet", "Waiting for fridge scan");
   }
@@ -247,20 +248,24 @@ void loop() {
 
   if (millis() - g_last_poll_ms >= INVENTORY_POLL_INTERVAL_MS) {
     g_last_poll_ms = millis();
-    // Don't poll while the user is entering an expiry date — it would overwrite the screen.
-    if (g_view == VIEW_LIST) {
+    // Don't poll while the user is on the new-item/expiry-entry screen — it would
+    // overwrite the screen or disrupt an in-progress edit. Polling on VIEW_STATS is
+    // fine since that screen doesn't depend on g_items.
+    if (g_view == VIEW_LIST || g_view == VIEW_STATS) {
       if (fetchInventory()) {
         String sig = buildSignature();
         if (sig != g_last_signature) {
           g_last_signature = sig;
-          // Only redraw if no pending notification is about to take over the screen.
-          if (g_pending_count == 0) renderInventory();
+          // fetchInventory() may have already switched to VIEW_NEW_ITEM and drawn
+          // the notification screen (via processNextPending()) — don't paint over
+          // it. g_pending_count alone isn't a reliable signal here: it's already
+          // been decremented for the one notification currently on screen.
+          if (g_view == VIEW_LIST) renderInventory();
         }
       }
     }
   }
 
   handleTouch();
-  tickDHT11();
   delay(50);
 }

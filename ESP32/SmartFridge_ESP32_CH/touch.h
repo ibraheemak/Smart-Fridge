@@ -374,21 +374,12 @@ void openItemDetail(int idx, int expiry_idx = -1) {
 }
 
 // ----------------------------------------------------------------------------
-// Save expiry date back to Firestore (rewrites the whole "items" array)
+// Write the current in-memory g_items[] (names/quantities/expiries) back to
+// Firestore. Shared by saveExpiry() and skipExpiry() so a skipped slot is
+// persisted as an empty placeholder, not just held in RAM — otherwise it
+// would look "new" again (and re-enqueue a prompt) after every reboot.
 // ----------------------------------------------------------------------------
-void saveExpiry() {
-  char buf[11];
-  snprintf(buf, sizeof(buf), "%04d-%02d-%02d", g_exp_year, g_exp_month, g_exp_day);
-
-  int expiry_idx = currentExpiryIndex();
-  InventoryItem& it = g_items[g_detail_index];
-
-  // Grow expiry_count if writing beyond current count.
-  if (expiry_idx >= it.expiry_count) it.expiry_count = expiry_idx + 1;
-  it.expiries[expiry_idx] = String(buf);
-
-  drawFooter("Saving expiry date...");
-
+void persistItemsToFirestore() {
   String url =
     "https://firestore.googleapis.com/v1/projects/" +
     String(FIREBASE_PROJECT_ID) +
@@ -428,9 +419,39 @@ void saveExpiry() {
   if (http.begin(client, url)) {
     http.addHeader("Content-Type", "application/json");
     int code = http.PATCH(body);
-    Serial.printf("[FIREBASE] PATCH expiry -> %d\n", code);
+    Serial.printf("[FIREBASE] PATCH items -> %d\n", code);
     http.end();
   }
+}
+
+// Skip a pending expiry prompt — persists the still-empty slot to Firestore
+// so it isn't re-detected as "new" and re-enqueued after a reboot.
+void skipExpiry() {
+  int expiry_idx = currentExpiryIndex();
+  InventoryItem& it = g_items[g_detail_index];
+  if (expiry_idx >= it.expiry_count) it.expiry_count = expiry_idx + 1;
+  // Leave it.expiries[expiry_idx] as "" — just make sure it's counted.
+
+  persistItemsToFirestore();
+  processNextPending();
+}
+
+// ----------------------------------------------------------------------------
+// Save expiry date back to Firestore (rewrites the whole "items" array)
+// ----------------------------------------------------------------------------
+void saveExpiry() {
+  char buf[11];
+  snprintf(buf, sizeof(buf), "%04d-%02d-%02d", g_exp_year, g_exp_month, g_exp_day);
+
+  int expiry_idx = currentExpiryIndex();
+  InventoryItem& it = g_items[g_detail_index];
+
+  // Grow expiry_count if writing beyond current count.
+  if (expiry_idx >= it.expiry_count) it.expiry_count = expiry_idx + 1;
+  it.expiries[expiry_idx] = String(buf);
+
+  drawFooter("Saving expiry date...");
+  persistItemsToFirestore();
 
   // If we came from the pending queue, process the next item.
   if (g_pending_count > 0) {
@@ -521,7 +542,7 @@ void handleTouch() {
     if (inBtn(btnEnterExpiry, tx, ty)) {
       openItemDetail(g_detail_index, expiry_idx);
     } else if (inBtn(btnSkip, tx, ty)) {
-      processNextPending();
+      skipExpiry();
     }
     return;
   }
