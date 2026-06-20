@@ -26,13 +26,43 @@
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_LIST, VIEW_DETAIL };
+enum ViewState { VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS };
 
 ViewState     g_view          = VIEW_LIST;
 int           g_detail_index  = -1;
 unsigned long g_last_touch_ms = 0;
 
 int g_exp_year = 0, g_exp_month = 0, g_exp_day = 0;
+
+// ----------------------------------------------------------------------------
+// Queue of new units that need an expiry date entered by the user.
+// Filled by the inventory-diff logic in SmartFridge_ESP32_CH.ino.
+// ----------------------------------------------------------------------------
+struct PendingExpiry {
+  int item_index;   // index into g_items[]
+  int expiry_index; // which slot in expiries[] to fill
+};
+
+// Slot [MAX_PENDING-1] is reserved as a temp to pass the current item/index to saveExpiry.
+#define MAX_PENDING 40
+PendingExpiry g_pending[MAX_PENDING];
+int           g_pending_count = 0;
+
+// Called by inventory-diff logic to enqueue a new unit.
+void enqueuePendingExpiry(int item_idx, int expiry_idx) {
+  if (g_pending_count >= MAX_PENDING - 1) return;  // -1: slot MAX_PENDING-1 is reserved as temp
+  g_pending[g_pending_count] = {item_idx, expiry_idx};
+  g_pending_count++;
+}
+
+// Consume the head of the queue and open the notification screen.
+// Declared here; defined below after drawNewItemScreen.
+void processNextPending();
+
+// Returns the expiry_index currently being edited for VIEW_NEW_ITEM / VIEW_DETAIL.
+int currentExpiryIndex() {
+  return g_pending[MAX_PENDING - 1].expiry_index;
+}
 
 // ----------------------------------------------------------------------------
 // Touch calibration (stored in NVS so it persists across reboots)
@@ -76,6 +106,7 @@ BtnRect btnBack;       // drawn size
 BtnRect btnBackHit;    // larger invisible touch zone (top-left edge is inaccurate)
 BtnRect btnDayMinus, btnDayPlus, btnMonMinus, btnMonPlus, btnYearMinus, btnYearPlus;
 BtnRect btnSave;
+BtnRect btnEnterExpiry, btnSkip;  // VIEW_NEW_ITEM notification screen
 
 void drawBtn(BtnRect b, const String& label, uint16_t color) {
   tft.fillRoundRect(b.x, b.y, b.w, b.h, 6, color);
@@ -218,10 +249,14 @@ void drawItemDetail(int idx) {
   tft.setTextColor(confidenceColor(it.confidence), TFT_BLACK);
   tft.drawString("Confidence: " + it.confidence, text_x, icon_y + 76);
 
+  int editing_slot = currentExpiryIndex();
+  String slot_label = "Expiry Date  (DD / MM / YYYY)";
+  if (it.expiry_count > 1)
+    slot_label = "Unit #" + String(editing_slot + 1) + "  Expiry  (DD / MM / YYYY)";
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
-  tft.drawString("Expiry Date  (DD / MM / YYYY)", w / 2, 150);
+  tft.drawString(slot_label, w / 2, 150);
 
   drawBtn(btnDayMinus, "-", TFT_DARKGREY);
   drawBtn(btnDayPlus, "+", TFT_DARKGREY);
@@ -234,15 +269,99 @@ void drawItemDetail(int idx) {
   drawBtn(btnSave, "Save", TFT_DARKGREEN);
 }
 
-void openItemDetail(int idx) {
+// ----------------------------------------------------------------------------
+// "New item detected" notification screen (VIEW_NEW_ITEM)
+// ----------------------------------------------------------------------------
+void drawNewItemScreen(int item_idx, int expiry_idx) {
+  tft.fillScreen(TFT_BLACK);
+  int w = tft.width(), h = tft.height();
+
+  // Header
+  tft.fillRect(0, 0, w, HEADER_HEIGHT_PX, 0x1967);  // deep teal
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, 0x1967);
+  tft.setTextSize(2);
+  tft.drawString("New Item Detected", w / 2, HEADER_HEIGHT_PX / 2);
+
+  // Icon
+  int icon_x = (w - ICON_SIZE_PX) / 2;
+  int icon_y = HEADER_HEIGHT_PX + 20;
+  drawIcon(g_items[item_idx].name, icon_x, icon_y, TFT_BLACK);
+
+  // Item name
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.drawString(g_items[item_idx].name, w / 2, icon_y + ICON_SIZE_PX + 18);
+
+  // Unit label (unit #N)
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  String unit_label = "Unit #" + String(expiry_idx + 1);
+  tft.drawString(unit_label, w / 2, icon_y + ICON_SIZE_PX + 40);
+
+  // Message
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.drawString("Set expiry date?", w / 2, icon_y + ICON_SIZE_PX + 70);
+
+  // Buttons
+  int btn_y = h - 80;
+  int btn_w = 160, btn_h = 50;
+  btnEnterExpiry = {(w / 2 - btn_w - 10), btn_y, btn_w, btn_h};
+  btnSkip        = {(w / 2 + 10),          btn_y, btn_w, btn_h};
+
+  drawBtn(btnEnterExpiry, "Set Date", TFT_DARKGREEN);
+  drawBtn(btnSkip,        "Skip",     TFT_DARKGREY);
+}
+
+void processNextPending() {
+  if (g_pending_count == 0) {
+    g_view = VIEW_LIST;
+    renderInventory();
+    return;
+  }
+  PendingExpiry p = g_pending[0];
+  // Shift queue
+  for (int i = 0; i < g_pending_count - 1; i++) g_pending[i] = g_pending[i + 1];
+  g_pending_count--;
+
+  g_detail_index = p.item_index;
+  int expiry_idx = p.expiry_index;
+
+  g_view = VIEW_NEW_ITEM;
+  drawNewItemScreen(g_detail_index, expiry_idx);
+
+  // Store which expiry slot we're about to fill (reuse g_pending[MAX_PENDING-1] as temp).
+  // We embed it in a dedicated variable instead:
+  g_pending[MAX_PENDING - 1] = {g_detail_index, expiry_idx};  // temp slot
+}
+
+// Open the detail/expiry-editor for item[idx], editing expiry slot [expiry_idx].
+// Pass expiry_idx = -1 when opening manually from the list (edits slot 0 for
+// backward-compat, or the first empty slot if one exists).
+void openItemDetail(int idx, int expiry_idx = -1) {
   g_detail_index = idx;
   g_view = VIEW_DETAIL;
 
   InventoryItem& it = g_items[idx];
-  if (it.expiry.length() == 10) {
-    g_exp_year  = it.expiry.substring(0, 4).toInt();
-    g_exp_month = it.expiry.substring(5, 7).toInt();
-    g_exp_day   = it.expiry.substring(8, 10).toInt();
+
+  // Resolve which slot to edit.
+  if (expiry_idx < 0) {
+    // Manual open from list: find first empty slot, fallback to slot 0.
+    expiry_idx = 0;
+    for (int i = 0; i < it.expiry_count; i++) {
+      if (it.expiries[i].length() == 0) { expiry_idx = i; break; }
+    }
+  }
+  // Record for saveExpiry().
+  g_pending[MAX_PENDING - 1] = {idx, expiry_idx};
+
+  const String& e = it.expiries[expiry_idx];
+  if (e.length() == 10) {
+    g_exp_year  = e.substring(0, 4).toInt();
+    g_exp_month = e.substring(5, 7).toInt();
+    g_exp_day   = e.substring(8, 10).toInt();
   } else {
     time_t now = time(nullptr);
     struct tm* t = localtime(&now);
@@ -255,15 +374,12 @@ void openItemDetail(int idx) {
 }
 
 // ----------------------------------------------------------------------------
-// Save expiry date back to Firestore (rewrites the whole "items" array)
+// Write the current in-memory g_items[] (names/quantities/expiries) back to
+// Firestore. Shared by saveExpiry() and skipExpiry() so a skipped slot is
+// persisted as an empty placeholder, not just held in RAM — otherwise it
+// would look "new" again (and re-enqueue a prompt) after every reboot.
 // ----------------------------------------------------------------------------
-void saveExpiry() {
-  char buf[11];
-  snprintf(buf, sizeof(buf), "%04d-%02d-%02d", g_exp_year, g_exp_month, g_exp_day);
-  g_items[g_detail_index].expiry = String(buf);
-
-  drawFooter("Saving expiry date...");
-
+void persistItemsToFirestore() {
   String url =
     "https://firestore.googleapis.com/v1/projects/" +
     String(FIREBASE_PROJECT_ID) +
@@ -287,7 +403,10 @@ void saveExpiry() {
     mf["name"]["stringValue"]       = g_items[i].name;
     mf["quantity"]["stringValue"]   = g_items[i].quantity;
     mf["confidence"]["stringValue"] = g_items[i].confidence;
-    mf["expiry"]["stringValue"]     = g_items[i].expiry;
+    // Serialize the expiries array.
+    JsonArray ea = mf["expiries"]["arrayValue"]["values"].to<JsonArray>();
+    for (int j = 0; j < g_items[i].expiry_count; j++)
+      ea.createNestedObject()["stringValue"] = g_items[i].expiries[j];
   }
 
   String body;
@@ -300,12 +419,47 @@ void saveExpiry() {
   if (http.begin(client, url)) {
     http.addHeader("Content-Type", "application/json");
     int code = http.PATCH(body);
-    Serial.printf("[FIREBASE] PATCH expiry -> %d\n", code);
+    Serial.printf("[FIREBASE] PATCH items -> %d\n", code);
     http.end();
   }
+}
 
-  g_view = VIEW_LIST;
-  renderInventory();
+// Skip a pending expiry prompt — persists the still-empty slot to Firestore
+// so it isn't re-detected as "new" and re-enqueued after a reboot.
+void skipExpiry() {
+  int expiry_idx = currentExpiryIndex();
+  InventoryItem& it = g_items[g_detail_index];
+  if (expiry_idx >= it.expiry_count) it.expiry_count = expiry_idx + 1;
+  // Leave it.expiries[expiry_idx] as "" — just make sure it's counted.
+
+  persistItemsToFirestore();
+  processNextPending();
+}
+
+// ----------------------------------------------------------------------------
+// Save expiry date back to Firestore (rewrites the whole "items" array)
+// ----------------------------------------------------------------------------
+void saveExpiry() {
+  char buf[11];
+  snprintf(buf, sizeof(buf), "%04d-%02d-%02d", g_exp_year, g_exp_month, g_exp_day);
+
+  int expiry_idx = currentExpiryIndex();
+  InventoryItem& it = g_items[g_detail_index];
+
+  // Grow expiry_count if writing beyond current count.
+  if (expiry_idx >= it.expiry_count) it.expiry_count = expiry_idx + 1;
+  it.expiries[expiry_idx] = String(buf);
+
+  drawFooter("Saving expiry date...");
+  persistItemsToFirestore();
+
+  // If we came from the pending queue, process the next item.
+  if (g_pending_count > 0) {
+    processNextPending();
+  } else {
+    g_view = VIEW_LIST;
+    renderInventory();
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -338,7 +492,24 @@ void handleTouch() {
 
   Serial.printf("[TOUCH] x=%d y=%d (corrected) view=%d\n", tx, ty, g_view);
 
+  // VIEW_STATS — tap anywhere in footer to go back.
+  if (g_view == VIEW_STATS) {
+    int footer_y = tft.height() - FOOTER_HEIGHT_PX;
+    if ((int)ty >= footer_y) { g_view = VIEW_LIST; renderInventory(); }
+    return;
+  }
+
   if (g_view == VIEW_LIST) {
+    // Tap the footer "📊 This Month" button to open stats.
+    int footer_y = tft.height() - FOOTER_HEIGHT_PX;
+    if ((int)ty >= footer_y) {
+      g_view = VIEW_STATS;
+      showStatus("Loading stats...", "");
+      fetchConsumedStats();
+      renderStatsScreen();
+      return;
+    }
+
     int list_top    = HEADER_HEIGHT_PX + 4;
     int list_bottom = tft.height() - FOOTER_HEIGHT_PX - 4;
 
@@ -362,6 +533,17 @@ void handleTouch() {
     if (rel >= ROW_HEIGHT_PX - ROW_TAP_DEADZONE_PX) return;  // tapped the gap/border between rows
 
     openItemDetail(row);
+    return;
+  }
+
+  // VIEW_NEW_ITEM — notification screen
+  if (g_view == VIEW_NEW_ITEM) {
+    int expiry_idx = currentExpiryIndex();
+    if (inBtn(btnEnterExpiry, tx, ty)) {
+      openItemDetail(g_detail_index, expiry_idx);
+    } else if (inBtn(btnSkip, tx, ty)) {
+      skipExpiry();
+    }
     return;
   }
 

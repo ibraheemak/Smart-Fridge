@@ -66,8 +66,141 @@ String fetchBasicItems() {
 // ============================================================================
 // Firestore write
 // ============================================================================
+
+// Fetch the existing expiries array for a named item from the current
+// inventory document. Returns a comma-separated list of "YYYY-MM-DD" strings
+// (or empty string if none exist). Used so a new scan doesn't wipe dates the
+// user already entered.
+String fetchExistingExpiries(const String& item_name) {
+  String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+               "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
+               "/inventory/current?key=" + String(FIREBASE_API_KEY);
+  HTTPClient http;
+  http.begin(url);
+  int code = http.GET();
+  if (code != 200) { http.end(); return ""; }
+  String body = http.getString();
+  http.end();
+
+  DynamicJsonDocument doc(8192);
+  if (deserializeJson(doc, body)) return "";
+
+  JsonArray existing = doc["fields"]["items"]["arrayValue"]["values"];
+  for (JsonObject v : existing) {
+    JsonObject mf = v["mapValue"]["fields"];
+    String name = mf["name"]["stringValue"].as<String>();
+    if (!name.equalsIgnoreCase(item_name)) continue;
+
+    // Found matching item — collect its expiries.
+    String result = "";
+    JsonArray ea = mf["expiries"]["arrayValue"]["values"];
+    for (JsonObject ev : ea) {
+      String d = ev["stringValue"].as<String>();
+      if (result.length()) result += ",";
+      result += d;
+    }
+    // Backward-compat: single legacy "expiry" field.
+    if (result.length() == 0) {
+      String legacy = mf["expiry"]["stringValue"].as<String>();
+      if (legacy.length() == 10) result = legacy;
+    }
+    return result;
+  }
+  return "";
+}
+
+// ============================================================================
+// Consumed items tracking
+// Increments counters in fridges/{fridge}/consumed/{YYYY-MM} for every item
+// that was in the previous scan but is missing from the new one.
+// ============================================================================
+void saveConsumedItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  // Build set of new item names (lowercase).
+  JsonArray new_items = new_items_doc["items"].as<JsonArray>();
+
+  // Check each old item — if it's gone now, it was consumed.
+  JsonArray old_items = old_doc["fields"]["items"]["arrayValue"]["values"];
+  if (old_items.isNull()) return;
+
+  String month_id = getMonthId();
+  String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+               "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
+               "/consumed/" + month_id + "?key=" + String(FIREBASE_API_KEY);
+
+  // First read existing consumed counts for this month.
+  DynamicJsonDocument consumed_doc(4096);
+  bool has_consumed = false;
+  {
+    HTTPClient http;
+    http.begin(url);
+    if (http.GET() == 200)
+      has_consumed = !deserializeJson(consumed_doc, http.getString());
+    http.end();
+  }
+
+  bool any_consumed = false;
+  StaticJsonDocument<2048> patch_doc;
+  JsonObject patch_fields = patch_doc.createNestedObject("fields");
+
+  for (JsonObject old_item : old_items) {
+    String old_name = old_item["mapValue"]["fields"]["name"]["stringValue"].as<String>();
+    if (old_name.length() == 0) continue;
+
+    // Check if this item still exists in the new scan.
+    bool still_exists = false;
+    for (JsonObject new_item : new_items) {
+      if (String(new_item["name"].as<String>()).equalsIgnoreCase(old_name)) {
+        still_exists = true;
+        break;
+      }
+    }
+
+    if (!still_exists) {
+      // Item disappeared — increment its consumed counter.
+      int prev_count = 0;
+      if (has_consumed && consumed_doc["fields"].containsKey(old_name))
+        prev_count = consumed_doc["fields"][old_name]["integerValue"].as<int>();
+      patch_fields[old_name]["integerValue"] = prev_count + 1;
+      any_consumed = true;
+      Serial.printf("[CONSUMED] %s -> %d times this month\n", old_name.c_str(), prev_count + 1);
+    }
+  }
+
+  if (!any_consumed) return;
+
+  String payload;
+  serializeJson(patch_doc, payload);
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.PATCH(payload);
+  http.end();
+  Serial.printf("[CONSUMED] save %s\n", (code==200||code==201) ? "OK" : "FAILED");
+}
+
 bool saveToFirebase(JsonDocument& items_doc) {
   if (!items_doc.containsKey("items") || WiFi.status() != WL_CONNECTED) return false;
+
+  // First, read the whole current document once so we can preserve expiries
+  // and detect consumed items.
+  String cur_url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+                   "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
+                   "/inventory/current?key=" + String(FIREBASE_API_KEY);
+  DynamicJsonDocument cur_doc(8192);
+  bool has_existing = false;
+  {
+    HTTPClient http;
+    http.begin(cur_url);
+    if (http.GET() == 200) {
+      has_existing = !deserializeJson(cur_doc, http.getString());
+    }
+    http.end();
+  }
+
+  // Detect and record consumed items before overwriting.
+  if (has_existing) saveConsumedItems(cur_doc, items_doc);
 
   StaticJsonDocument<4096> doc;
   JsonObject fields = doc.createNestedObject("fields");
@@ -76,19 +209,35 @@ bool saveToFirebase(JsonDocument& items_doc) {
 
   JsonArray values = fields["items"]["arrayValue"].createNestedArray("values");
   for (JsonObject item : items_doc["items"].as<JsonArray>()) {
+    String item_name = item["name"].as<String>();
     JsonObject mf = values.createNestedObject()["mapValue"].createNestedObject("fields");
-    mf["name"]["stringValue"]       = item["name"].as<String>();
+    mf["name"]["stringValue"]       = item_name;
     mf["quantity"]["stringValue"]   = item["quantity"].as<String>();
     mf["confidence"]["stringValue"] = item["confidence"].as<String>();
+
+    // Preserve any expiry dates the user already entered for this item.
+    if (has_existing) {
+      JsonArray existing_items = cur_doc["fields"]["items"]["arrayValue"]["values"];
+      for (JsonObject ev : existing_items) {
+        JsonObject emf = ev["mapValue"]["fields"];
+        if (!String(emf["name"]["stringValue"].as<String>()).equalsIgnoreCase(item_name)) continue;
+
+        // Copy expiries array.
+        JsonArray ea = emf["expiries"]["arrayValue"]["values"];
+        if (ea.size() > 0) {
+          JsonArray out_ea = mf["expiries"]["arrayValue"].createNestedArray("values");
+          for (JsonObject ed : ea)
+            out_ea.createNestedObject()["stringValue"] = ed["stringValue"].as<String>();
+        }
+        break;
+      }
+    }
   }
 
   String payload;
   serializeJson(doc, payload);
-  String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
-               "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
-               "/inventory/current?key=" + String(FIREBASE_API_KEY);
   HTTPClient http;
-  http.begin(url);
+  http.begin(cur_url);
   http.addHeader("Content-Type", "application/json");
   int code = http.PATCH(payload);
   http.end();
