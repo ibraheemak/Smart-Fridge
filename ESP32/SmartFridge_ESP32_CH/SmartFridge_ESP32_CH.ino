@@ -24,7 +24,6 @@
 #include "display.h"
 #include "stats.h"
 #include "touch.h"
-#include "dht11.h"
 #include "door.h"
 #include "uart_link.h"
 
@@ -230,7 +229,6 @@ void setup() {
   checkResetButton();
   initWiFi();
   configureTime();
-  initDHT11();
   initDoorSensor();
   initUartLink();
 
@@ -273,7 +271,6 @@ void loop() {
   }
 
   handleTouch();
-  tickDHT11();
 
   if (doorJustClosed()) {
     Serial.println("[DOOR] Closed — triggering CAM scan");

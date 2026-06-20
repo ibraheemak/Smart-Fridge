@@ -112,24 +112,22 @@ String fetchExistingExpiries(const String& item_name) {
 // ============================================================================
 // Consumed items tracking
 // Increments counters in fridges/{fridge}/consumed/{YYYY-MM} for every item
-// that was in the previous scan but is missing from the new one.
+// that is in the new scan but wasn't in the previous one — i.e. an item the
+// user just bought, not one they used up.
 // ============================================================================
 void saveConsumedItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc) {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  // Build set of new item names (lowercase).
   JsonArray new_items = new_items_doc["items"].as<JsonArray>();
 
-  // Check each old item — if it's gone now, it was consumed.
   JsonArray old_items = old_doc["fields"]["items"]["arrayValue"]["values"];
-  if (old_items.isNull()) return;
 
   String month_id = getMonthId();
   String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
                "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
                "/consumed/" + month_id + "?key=" + String(FIREBASE_API_KEY);
 
-  // First read existing consumed counts for this month.
+  // First read existing counts for this month.
   DynamicJsonDocument consumed_doc(4096);
   bool has_consumed = false;
   {
@@ -140,35 +138,36 @@ void saveConsumedItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc
     http.end();
   }
 
-  bool any_consumed = false;
+  bool any_new = false;
   StaticJsonDocument<2048> patch_doc;
   JsonObject patch_fields = patch_doc.createNestedObject("fields");
 
-  for (JsonObject old_item : old_items) {
-    String old_name = old_item["mapValue"]["fields"]["name"]["stringValue"].as<String>();
-    if (old_name.length() == 0) continue;
+  for (JsonObject new_item : new_items) {
+    String new_name = new_item["name"].as<String>();
+    if (new_name.length() == 0) continue;
 
-    // Check if this item still exists in the new scan.
-    bool still_exists = false;
-    for (JsonObject new_item : new_items) {
-      if (String(new_item["name"].as<String>()).equalsIgnoreCase(old_name)) {
-        still_exists = true;
+    // Check if this item already existed in the previous scan.
+    bool existed_before = false;
+    for (JsonObject old_item : old_items) {
+      String old_name = old_item["mapValue"]["fields"]["name"]["stringValue"].as<String>();
+      if (old_name.equalsIgnoreCase(new_name)) {
+        existed_before = true;
         break;
       }
     }
 
-    if (!still_exists) {
-      // Item disappeared — increment its consumed counter.
+    if (!existed_before) {
+      // Newly bought item — bump (or start) its counter for this month.
       int prev_count = 0;
-      if (has_consumed && consumed_doc["fields"].containsKey(old_name))
-        prev_count = consumed_doc["fields"][old_name]["integerValue"].as<int>();
-      patch_fields[old_name]["integerValue"] = prev_count + 1;
-      any_consumed = true;
-      Serial.printf("[CONSUMED] %s -> %d times this month\n", old_name.c_str(), prev_count + 1);
+      if (has_consumed && consumed_doc["fields"].containsKey(new_name))
+        prev_count = consumed_doc["fields"][new_name]["integerValue"].as<int>();
+      patch_fields[new_name]["integerValue"] = prev_count + 1;
+      any_new = true;
+      Serial.printf("[CONSUMED] %s -> %d this month\n", new_name.c_str(), prev_count + 1);
     }
   }
 
-  if (!any_consumed) return;
+  if (!any_new) return;
 
   String payload;
   serializeJson(patch_doc, payload);
