@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import '../theme/app_theme.dart';
+import 'home_screen.dart';
 import 'inventory_screen.dart';
-import 'camera_screen.dart';
-import 'history_screen.dart';
+import 'recipes_screen.dart';
 import 'shopping_screen.dart';
+import 'settings_screen.dart';
 
 class MainScaffold extends StatefulWidget {
   const MainScaffold({super.key});
@@ -15,126 +15,50 @@ class MainScaffold extends StatefulWidget {
 class _MainScaffoldState extends State<MainScaffold> {
   int _index = 0;
 
-  // IndexedStack keeps all screens alive so streams keep running
-  static const _screens = [
-    InventoryScreen(),
-    CameraScreen(),
-    HistoryScreen(),
-    ShoppingScreen(),
-  ];
+  void _navigate(int index) => setState(() => _index = index);
 
   @override
   Widget build(BuildContext context) {
+    final screens = [
+      HomeScreen(onNavigate: _navigate),
+      const InventoryScreen(),
+      const RecipesScreen(),
+      const ShoppingScreen(),
+      const SettingsScreen(),
+    ];
+
     return Scaffold(
-      body: IndexedStack(index: _index, children: _screens),
-      bottomNavigationBar: _BottomBar(
-        currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
-      ),
-    );
-  }
-}
-
-class _BottomBar extends StatelessWidget {
-  final int currentIndex;
-  final ValueChanged<int> onTap;
-
-  const _BottomBar({required this.currentIndex, required this.onTap});
-
-  static const _items = [
-    (icon: Icons.kitchen_rounded, label: 'Fridge'),
-    (icon: Icons.camera_alt_rounded, label: 'Camera'),
-    (icon: Icons.bar_chart_rounded, label: 'History'),
-    (icon: Icons.shopping_cart_rounded, label: 'Shopping'),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.card,
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x18000000),
-            blurRadius: 20,
-            offset: Offset(0, -4),
+      body: IndexedStack(index: _index, children: screens),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index,
+        onDestinationSelected: _navigate,
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded),
+            label: 'Home',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.inventory_2_outlined),
+            selectedIcon: Icon(Icons.inventory_2_rounded),
+            label: 'Inventory',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.menu_book_outlined),
+            selectedIcon: Icon(Icons.menu_book_rounded),
+            label: 'Recipes',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.shopping_cart_outlined),
+            selectedIcon: Icon(Icons.shopping_cart_rounded),
+            label: 'Shopping',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings_rounded),
+            label: 'Settings',
           ),
         ],
-      ),
-      child: SafeArea(
-        child: SizedBox(
-          height: 64,
-          child: Row(
-            children: List.generate(
-              _items.length,
-              (i) => _NavItem(
-                icon: _items[i].icon,
-                label: _items[i].label,
-                selected: i == currentIndex,
-                onTap: () => onTap(i),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _NavItem({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 18, vertical: 5),
-              decoration: BoxDecoration(
-                color: selected
-                    ? AppColors.primary.withValues(alpha: 0.12)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Icon(
-                icon,
-                size: 22,
-                color: selected
-                    ? AppColors.primary
-                    : AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight:
-                    selected ? FontWeight.w600 : FontWeight.w400,
-                color: selected
-                    ? AppColors.primary
-                    : AppColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

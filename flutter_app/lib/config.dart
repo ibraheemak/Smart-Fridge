@@ -4,7 +4,7 @@
 /// ESP32 IP: shown in serial monitor on CAM boot: [WEB] http://192.168.x.x/latest.jpg
 class AppConfig {
   // Gemini AI — recipe recommendations (same key as SECRETS.h)
-  static const String geminiApiKey = 'YOUR_GEMINI_API_KEY';
+  static const String geminiApiKey = 'AIzaSyBWOcmxt6CX9pQdDoihR5VWw8zjr0WmBT8';
   static const String geminiEndpoint =
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
