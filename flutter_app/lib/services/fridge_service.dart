@@ -29,14 +29,18 @@ class FridgeService {
           : null);
 
   /// Last 20 scans, newest first.
+  /// Sorted client-side (doc IDs are ISO timestamps — sort lexicographically).
   static Stream<List<ScanRecord>> scanHistoryStream() => _fridgeRef
       .collection('scans')
-      .orderBy(FieldPath.documentId, descending: true)
       .limit(20)
       .snapshots()
-      .map((s) => s.docs
-          .map((d) => ScanRecord.fromDoc(d.id, d.data()))
-          .toList());
+      .map((s) {
+        final docs = s.docs
+            .map((d) => ScanRecord.fromDoc(d.id, d.data()))
+            .toList()
+          ..sort((a, b) => b.id.compareTo(a.id));
+        return docs;
+      });
 
   // ── One-shot reads ─────────────────────────────────────────────────────────
 
