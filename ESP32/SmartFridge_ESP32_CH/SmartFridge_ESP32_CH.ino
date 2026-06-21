@@ -10,6 +10,7 @@
  *   parameters.h — pin assignments and tunable constants
  *   tft_setup.h  — TFT_eSPI pin config (auto-loaded by the library)
  *   SECRETS.h    — Firebase credentials
+ *   gm65.h       — GM65 barcode scanner -> Open Food Facts -> inventory
  */
 
 #include <WiFi.h>
@@ -26,6 +27,7 @@
 #include "stats.h"
 #include "door.h"
 #include "uart_link.h"
+#include "gm65.h"
 
 // ============================================================================
 // STATE
@@ -235,6 +237,7 @@ void setup() {
   configureTime();
   initDoorSensor();
   initUartLink();
+  initGM65();
 
   showStatus("Loading inventory", "");
   if (fetchInventory()) {
@@ -275,6 +278,7 @@ void loop() {
   }
 
   handleTouch();
+  pollGM65();
 
   if (doorJustClosed()) {
     Serial.println("[DOOR] Closed — triggering CAM scan");
