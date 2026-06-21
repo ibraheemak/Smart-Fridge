@@ -38,6 +38,10 @@ InventoryItem g_items[MAX_ITEMS_DISPLAYED];
 int    g_item_count = 0;
 String g_updated_at = "";
 
+// Index of the first visible row in the inventory list — lets the list
+// scroll via the up/down arrow strips drawn by renderInventory().
+int g_list_scroll = 0;
+
 // ============================================================================
 // Backlight
 // ============================================================================
@@ -304,6 +308,55 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
 // ============================================================================
 // Inventory rendering
 // ============================================================================
+
+// Layout of the scrollable list area — shared by renderInventory() (drawing)
+// and handleTouch() (hit-testing), so the two never disagree about where the
+// up/down arrow strips and rows actually are.
+struct ListLayout {
+  int  top, bottom;     // full list area, between header and footer
+  bool show_up;         // scrolled past the first item
+  int  up_y;             // up-arrow strip top (only valid if show_up)
+  int  rows_y0;          // first item row's top
+  int  rows_visible;     // how many rows fit given the arrow strips shown
+  bool show_down;        // more items below the visible window
+  int  down_y;           // down-arrow strip top (only valid if show_down)
+};
+
+ListLayout computeListLayout() {
+  ListLayout l;
+  l.top    = HEADER_HEIGHT_PX + 4;
+  l.bottom = tft.height() - FOOTER_HEIGHT_PX - 4;
+
+  int remaining = max(0, g_item_count - g_list_scroll);
+
+  l.show_up = g_list_scroll > 0;
+  int avail = l.bottom - l.top - (l.show_up ? SCROLL_ARROW_H : 0);
+  int capacity = max(0, avail / ROW_HEIGHT_PX);
+  l.show_down = remaining > capacity;
+  if (l.show_down) {
+    capacity = max(0, (avail - SCROLL_ARROW_H) / ROW_HEIGHT_PX);
+    l.show_down = remaining > capacity;
+  }
+  // Never draw more rows than there actually are items left — capacity is
+  // just the screen-space ceiling, not the real count.
+  l.rows_visible = min(capacity, remaining);
+
+  l.up_y     = l.top;
+  l.rows_y0  = l.top + (l.show_up ? SCROLL_ARROW_H : 0);
+  l.down_y   = l.rows_y0 + l.rows_visible * ROW_HEIGHT_PX;
+  return l;
+}
+
+void drawScrollArrow(int y, bool pointingUp) {
+  int w = tft.width();
+  tft.fillRect(0, y, w, SCROLL_ARROW_H, 0x2104);
+  tft.drawFastHLine(0, y, w, TFT_DARKGREY);
+  tft.drawFastHLine(0, y + SCROLL_ARROW_H - 1, w, TFT_DARKGREY);
+  int cx = w / 2, cy = y + SCROLL_ARROW_H / 2;
+  if (pointingUp) tft.fillTriangle(cx - 10, cy + 6, cx + 10, cy + 6, cx, cy - 6, TFT_LIGHTGREY);
+  else             tft.fillTriangle(cx - 10, cy - 6, cx + 10, cy - 6, cx, cy + 6, TFT_LIGHTGREY);
+}
+
 void drawItemRow(int index, int y) {
   int w = tft.width();
   int rowH = ROW_HEIGHT_PX - ROW_GAP_PX;
@@ -364,23 +417,21 @@ void renderInventory() {
   tft.fillScreen(TFT_BLACK);
   drawHeader();
 
-  int list_top    = HEADER_HEIGHT_PX + 4;
-  int list_bottom = tft.height() - FOOTER_HEIGHT_PX - 4;
-  int max_rows    = (list_bottom - list_top) / ROW_HEIGHT_PX;
+  // Clamp scroll in case the list shrank since the last render. Step down
+  // one at a time rather than computing this in one shot — rows_visible
+  // itself depends on whether the up/down arrows are shown, which depends
+  // on the scroll position, so a single formula can under/overshoot.
+  while (g_list_scroll > 0 && computeListLayout().rows_visible == 0) g_list_scroll--;
+
+  ListLayout l = computeListLayout();
 
   if (g_item_count == 0) {
     drawEmptyState();
   } else {
-    int rows = min(g_item_count, max_rows);
-    for (int i = 0; i < rows; i++)
-      drawItemRow(i, list_top + i * ROW_HEIGHT_PX);
-    if (g_item_count > max_rows) {
-      tft.setTextDatum(MC_DATUM);
-      tft.setTextColor(TFT_ORANGE, TFT_BLACK);
-      tft.setTextSize(1);
-      tft.drawString("+ " + String(g_item_count - max_rows) + " more",
-                     tft.width() / 2, list_bottom);
-    }
+    if (l.show_up) drawScrollArrow(l.up_y, true);
+    for (int i = 0; i < l.rows_visible; i++)
+      drawItemRow(g_list_scroll + i, l.rows_y0 + i * ROW_HEIGHT_PX);
+    if (l.show_down) drawScrollArrow(l.down_y, false);
   }
 
   // Footer doubles as a "This Month" stats button.

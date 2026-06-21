@@ -83,7 +83,7 @@ String fetchExistingExpiries(const String& item_name) {
   http.end();
 
   DynamicJsonDocument doc(8192);
-  if (deserializeJson(doc, body)) return "";
+  if (deserializeJson(doc, body, DeserializationOption::NestingLimit(20))) return "";
 
   JsonArray existing = doc["fields"]["items"]["arrayValue"]["values"];
   for (JsonObject v : existing) {
@@ -109,13 +109,52 @@ String fetchExistingExpiries(const String& item_name) {
   return "";
 }
 
+// Percent-encode a string for safe use as a URL query value (Firestore field
+// names can contain spaces/punctuation from AI-recognized item names).
+String urlEncode(const String& s) {
+  String out;
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      out += c;
+    } else {
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%%%02X", (unsigned char)c);
+      out += buf;
+    }
+  }
+  return out;
+}
+
+// Firestore field-path segments containing anything outside [a-zA-Z0-9_] (e.g.
+// spaces in "Greek Yogurt") must be wrapped in backticks, with any backtick
+// or backslash inside escaped — otherwise updateMask.fieldPaths is rejected
+// as an invalid argument.
+String quoteFieldPath(const String& name) {
+  bool needs_quoting = false;
+  for (size_t i = 0; i < name.length(); i++) {
+    char c = name[i];
+    if (!isalnum((unsigned char)c) && c != '_') { needs_quoting = true; break; }
+  }
+  if (!needs_quoting) return name;
+
+  String out = "`";
+  for (size_t i = 0; i < name.length(); i++) {
+    char c = name[i];
+    if (c == '`' || c == '\\') out += '\\';
+    out += c;
+  }
+  out += "`";
+  return out;
+}
+
 // ============================================================================
-// Consumed items tracking
-// Increments counters in fridges/{fridge}/consumed/{YYYY-MM} for every item
-// that is in the new scan but wasn't in the previous one — i.e. an item the
-// user just bought, not one they used up.
+// Bought items tracking
+// Increments counters in fridges/{fridge}/bought/{YYYY-MM} for every item the
+// user just bought: either a name that wasn't in the previous scan at all,
+// or an existing item whose quantity went up (more units bought).
 // ============================================================================
-void saveConsumedItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc) {
+void saveBoughtItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc) {
   if (WiFi.status() != WL_CONNECTED) return;
 
   JsonArray new_items = new_items_doc["items"].as<JsonArray>();
@@ -125,45 +164,56 @@ void saveConsumedItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc
   String month_id = getMonthId();
   String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
                "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
-               "/consumed/" + month_id + "?key=" + String(FIREBASE_API_KEY);
+               "/bought/" + month_id + "?key=" + String(FIREBASE_API_KEY);
 
   // First read existing counts for this month.
-  DynamicJsonDocument consumed_doc(4096);
-  bool has_consumed = false;
+  DynamicJsonDocument bought_doc(4096);
+  bool has_bought = false;
   {
     HTTPClient http;
     http.begin(url);
     if (http.GET() == 200)
-      has_consumed = !deserializeJson(consumed_doc, http.getString());
+      has_bought = !deserializeJson(bought_doc, http.getString());
     http.end();
   }
 
   bool any_new = false;
   StaticJsonDocument<2048> patch_doc;
   JsonObject patch_fields = patch_doc.createNestedObject("fields");
+  String mask_params = "";
 
   for (JsonObject new_item : new_items) {
     String new_name = new_item["name"].as<String>();
     if (new_name.length() == 0) continue;
+    int new_qty = new_item["quantity"].as<String>().toInt();
+    if (new_qty <= 0) new_qty = 1;
 
-    // Check if this item already existed in the previous scan.
-    bool existed_before = false;
+    // Find the matching item (by name) in the previous scan, if any.
+    bool found = false;
+    int old_qty = 0;
     for (JsonObject old_item : old_items) {
-      String old_name = old_item["mapValue"]["fields"]["name"]["stringValue"].as<String>();
+      JsonObject of = old_item["mapValue"]["fields"];
+      String old_name = of["name"]["stringValue"].as<String>();
       if (old_name.equalsIgnoreCase(new_name)) {
-        existed_before = true;
+        found = true;
+        old_qty = of["quantity"]["stringValue"].as<String>().toInt();
         break;
       }
     }
 
-    if (!existed_before) {
-      // Newly bought item — bump (or start) its counter for this month.
+    // Brand-new item, or an existing one bought in greater quantity than before.
+    bool just_bought = !found || new_qty > old_qty;
+    Serial.printf("[BOUGHT] check %s: found=%d old_qty=%d new_qty=%d just_bought=%d\n",
+                  new_name.c_str(), found, old_qty, new_qty, just_bought);
+
+    if (just_bought) {
       int prev_count = 0;
-      if (has_consumed && consumed_doc["fields"].containsKey(new_name))
-        prev_count = consumed_doc["fields"][new_name]["integerValue"].as<int>();
+      if (has_bought && bought_doc["fields"].containsKey(new_name))
+        prev_count = bought_doc["fields"][new_name]["integerValue"].as<int>();
       patch_fields[new_name]["integerValue"] = prev_count + 1;
       any_new = true;
-      Serial.printf("[CONSUMED] %s -> %d this month\n", new_name.c_str(), prev_count + 1);
+      mask_params += "&updateMask.fieldPaths=" + urlEncode(quoteFieldPath(new_name));
+      Serial.printf("[BOUGHT] %s -> %d this month\n", new_name.c_str(), prev_count + 1);
     }
   }
 
@@ -172,18 +222,24 @@ void saveConsumedItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc
   String payload;
   serializeJson(patch_doc, payload);
   HTTPClient http;
-  http.begin(url);
+  // updateMask.fieldPaths makes this a merge — without it, Firestore replaces
+  // the whole document with just the fields in the body, wiping every other
+  // item's count that wasn't touched by this scan.
+  http.begin(url + mask_params);
   http.addHeader("Content-Type", "application/json");
   int code = http.PATCH(payload);
+  String resp = (code != 200 && code != 201) ? http.getString() : "";
   http.end();
-  Serial.printf("[CONSUMED] save %s\n", (code==200||code==201) ? "OK" : "FAILED");
+  Serial.printf("[BOUGHT] save %s (HTTP %d)%s%s\n",
+                (code==200||code==201) ? "OK" : "FAILED", code,
+                resp.length() ? " — " : "", resp.c_str());
 }
 
 bool saveToFirebase(JsonDocument& items_doc) {
   if (!items_doc.containsKey("items") || WiFi.status() != WL_CONNECTED) return false;
 
   // First, read the whole current document once so we can preserve expiries
-  // and detect consumed items.
+  // and detect newly bought items.
   String cur_url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
                    "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
                    "/inventory/current?key=" + String(FIREBASE_API_KEY);
@@ -192,14 +248,23 @@ bool saveToFirebase(JsonDocument& items_doc) {
   {
     HTTPClient http;
     http.begin(cur_url);
-    if (http.GET() == 200) {
-      has_existing = !deserializeJson(cur_doc, http.getString());
+    int get_code = http.GET();
+    if (get_code == 200) {
+      // Default nesting limit (10) is too shallow for this doc shape once
+      // per-unit expiries are nested inside each item (fields > items >
+      // arrayValue > values > mapValue > fields > expiries > arrayValue >
+      // values > stringValue).
+      DeserializationError err = deserializeJson(cur_doc, http.getString(), DeserializationOption::NestingLimit(20));
+      has_existing = !err;
+      if (err) Serial.printf("[BOUGHT] skip — couldn't parse existing inventory doc: %s\n", err.c_str());
+    } else {
+      Serial.printf("[BOUGHT] skip — no existing inventory doc yet (GET %d)\n", get_code);
     }
     http.end();
   }
 
-  // Detect and record consumed items before overwriting.
-  if (has_existing) saveConsumedItems(cur_doc, items_doc);
+  // Detect and record newly bought items before overwriting.
+  if (has_existing) saveBoughtItems(cur_doc, items_doc);
 
   StaticJsonDocument<4096> doc;
   JsonObject fields = doc.createNestedObject("fields");
