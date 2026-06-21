@@ -22,13 +22,26 @@
 #include "SECRETS.h"
 #include "parameters.h"
 #include "display.h"
-#include "dht11.h"
+#include "stats.h"
+#include "touch.h"
+#include "door.h"
+#include "uart_link.h"
 
 // ============================================================================
 // STATE
 // ============================================================================
 String        g_last_signature = "";
 unsigned long g_last_poll_ms   = 0;
+
+// Previous inventory snapshot — used to detect new units added since last scan.
+// Populated after the first successful fetch so we don't false-trigger on boot.
+struct PrevItem {
+  String name;
+  int    expiry_count;  // how many expiry slots existed before
+};
+PrevItem      g_prev_items[MAX_ITEMS_DISPLAYED];
+int           g_prev_item_count  = 0;
+bool          g_prev_initialized = false;  // false until after the very first fetch
 
 // ============================================================================
 // FIRESTORE
@@ -78,17 +91,79 @@ bool fetchInventory() {
 
   g_updated_at = fields["updatedAt"]["stringValue"].as<String>();
   JsonArray values = fields["items"]["arrayValue"]["values"];
+
+  // Save previous snapshot before overwriting g_items.
+  g_prev_item_count = g_item_count;
+  for (int i = 0; i < g_item_count; i++) {
+    g_prev_items[i].name         = g_items[i].name;
+    g_prev_items[i].expiry_count = g_items[i].expiry_count;
+  }
+
   g_item_count = 0;
   for (JsonObject v : values) {
     if (g_item_count >= MAX_ITEMS_DISPLAYED) break;
     JsonObject mf = v["mapValue"]["fields"];
-    g_items[g_item_count].name       = mf["name"]["stringValue"].as<String>();
-    g_items[g_item_count].quantity   = mf["quantity"]["stringValue"].as<String>();
-    g_items[g_item_count].confidence = mf["confidence"]["stringValue"].as<String>();
+    InventoryItem& it = g_items[g_item_count];
+    it.name       = mf["name"]["stringValue"].as<String>();
+    it.quantity   = mf["quantity"]["stringValue"].as<String>();
+    it.confidence = mf["confidence"]["stringValue"].as<String>();
+    it.expiry_count = 0;
+
+    // Parse expiries array (new format).
+    JsonArray ea = mf["expiries"]["arrayValue"]["values"];
+    for (JsonObject ev : ea) {
+      if (it.expiry_count >= MAX_EXPIRIES_PER_ITEM) break;
+      it.expiries[it.expiry_count++] = ev["stringValue"].as<String>();
+    }
+    // Backward-compat: if old "expiry" single field exists and no array yet.
+    if (it.expiry_count == 0) {
+      String legacy = mf["expiry"]["stringValue"].as<String>();
+      if (legacy.length() == 10) {
+        it.expiries[0] = legacy;
+        it.expiry_count = 1;
+      }
+    }
+
     g_item_count++;
   }
 
   Serial.printf("[FIREBASE] %d items, updatedAt=%s\n", g_item_count, g_updated_at.c_str());
+
+  // Detect units that still need an expiry date and enqueue prompts for them.
+  // g_prev_item_count is 0 on the very first fetch (incl. right after a reboot),
+  // so every item is treated as "found = false" and any empty expiry slot is
+  // enqueued — this also re-prompts for units that were never dated before a
+  // restart, instead of silently adopting them as the baseline.
+  for (int i = 0; i < g_item_count; i++) {
+    InventoryItem& it = g_items[i];
+    // Find matching item in previous snapshot.
+    int prev_expiry_count = 0;
+    bool found = false;
+    for (int j = 0; j < g_prev_item_count; j++) {
+      if (g_prev_items[j].name.equalsIgnoreCase(it.name)) {
+        prev_expiry_count = g_prev_items[j].expiry_count;
+        found = true;
+        break;
+      }
+    }
+    // New units = slots that didn't exist before and have no date yet.
+    int start = found ? prev_expiry_count : 0;
+    // Parse quantity to estimate how many units there are now.
+    int qty = it.quantity.toInt();
+    if (qty <= 0) qty = it.expiry_count > 0 ? it.expiry_count : 1;
+    // Clamp to array bounds.
+    if (qty > MAX_EXPIRIES_PER_ITEM) qty = MAX_EXPIRIES_PER_ITEM;
+    // Grow expiry_count to match quantity (new slots start empty).
+    while (it.expiry_count < qty) it.expiries[it.expiry_count++] = "";
+    // Enqueue any new empty slots.
+    for (int s = start; s < it.expiry_count; s++) {
+      if (it.expiries[s].length() == 0)
+        enqueuePendingExpiry(i, s);
+    }
+  }
+  if (g_pending_count > 0) processNextPending();
+
+  g_prev_initialized = true;
   return true;
 }
 
@@ -150,15 +225,18 @@ void setup() {
   TJpgDec.setSwapBytes(true);
 
   showStatus("Smart Fridge", "Booting...");
+  initTouch();
   checkResetButton();
   initWiFi();
   configureTime();
-  initDHT11();
+  initDoorSensor();
+  initUartLink();
 
   showStatus("Loading inventory", "");
   if (fetchInventory()) {
     g_last_signature = buildSignature();
-    renderInventory();
+    // Don't overwrite the new-item prompt that fetchInventory() may have just drawn.
+    if (g_view == VIEW_LIST) renderInventory();
   } else {
     showStatus("No data yet", "Waiting for fridge scan");
   }
@@ -174,15 +252,31 @@ void loop() {
 
   if (millis() - g_last_poll_ms >= INVENTORY_POLL_INTERVAL_MS) {
     g_last_poll_ms = millis();
-    if (fetchInventory()) {
-      String sig = buildSignature();
-      if (sig != g_last_signature) {
-        g_last_signature = sig;
-        renderInventory();
+    // Don't poll while the user is on the new-item/expiry-entry screen — it would
+    // overwrite the screen or disrupt an in-progress edit. Polling on VIEW_STATS is
+    // fine since that screen doesn't depend on g_items.
+    if (g_view == VIEW_LIST || g_view == VIEW_STATS) {
+      if (fetchInventory()) {
+        String sig = buildSignature();
+        if (sig != g_last_signature) {
+          g_last_signature = sig;
+          // fetchInventory() may have already switched to VIEW_NEW_ITEM and drawn
+          // the notification screen (via processNextPending()) — don't paint over
+          // it. g_pending_count alone isn't a reliable signal here: it's already
+          // been decremented for the one notification currently on screen.
+          if (g_view == VIEW_LIST) renderInventory();
+        }
       }
     }
   }
 
-  tickDHT11();
+  handleTouch();
+
+  if (doorJustClosed()) {
+    Serial.println("[DOOR] Closed — triggering CAM scan");
+    delay(DOOR_SETTLE_MS);          // let door seal + items settle
+    uartSendScanTrigger();
+  }
+
   delay(50);
 }

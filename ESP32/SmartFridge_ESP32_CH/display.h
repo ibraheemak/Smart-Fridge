@@ -1,5 +1,12 @@
 #pragma once
 
+// Force TFT_eSPI to use this sketch's own pin/touch config (tft_setup.h)
+// instead of the library's globally-installed User_Setup.h, which is set up
+// for the CAM board (TFT_CS=-1, TFT_RST=-1, no TOUCH_CS at all). Without this,
+// touch is silently compiled out.
+#define USER_SETUP_LOADED
+#include "tft_setup.h"
+
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
 #include <HTTPClient.h>
@@ -16,10 +23,15 @@ TFT_eSPI tft = TFT_eSPI();
 // ============================================================================
 // Inventory data — written by Firebase fetch, read by draw functions
 // ============================================================================
+// Maximum number of expiry dates stored per item (one per unit).
+#define MAX_EXPIRIES_PER_ITEM 20
+
 struct InventoryItem {
   String name;
   String quantity;
   String confidence;
+  String expiries[MAX_EXPIRIES_PER_ITEM];  // one per unit, "YYYY-MM-DD" or ""
+  int    expiry_count;                      // how many slots are filled
 };
 
 InventoryItem g_items[MAX_ITEMS_DISPLAYED];
@@ -207,6 +219,20 @@ bool fetchIconJpeg(const String& item_name, uint8_t** out_buf, size_t* out_len) 
 
 static const size_t ICON_MAX_SRC_BYTES = 96 * 1024;
 
+// Drawn when an icon can't be decoded (e.g. unsupported/progressive JPEG) or
+// fetched at all: a neutral box with the item's first letter.
+void drawIconPlaceholder(const String& name, int x, int y, uint16_t bg) {
+  tft.fillRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, bg);
+  tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_DARKGREY);
+  if (name.length() == 0) return;
+  String letter = String(name[0]);
+  letter.toUpperCase();
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, bg);
+  tft.setTextSize(2);
+  tft.drawString(letter, x + ICON_SIZE_PX / 2, y + ICON_SIZE_PX / 2);
+}
+
 void drawIcon(const String& name, int x, int y, uint16_t bg) {
   tft.fillRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, bg);
 
@@ -218,11 +244,15 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
   }
 
   uint16_t jw = 0, jh = 0;
-  if (TJpgDec.getJpgSize(&jw, &jh, jbuf, jlen) != 0 || jw == 0 || jh == 0) {
+  int size_rc = TJpgDec.getJpgSize(&jw, &jh, jbuf, jlen);
+  if (size_rc != 0 || jw == 0 || jh == 0) {
     TJpgDec.setJpgScale(1);
     TJpgDec.setCallback(tftJpgOutput);
-    if (TJpgDec.drawJpg(x, y, jbuf, jlen) != 0)
-      tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_RED);
+    int rc1 = TJpgDec.drawJpg(x, y, jbuf, jlen);
+    Serial.printf("[ICON] %s getJpgSize rc=%d (jw=%u jh=%u) -> fallback drawJpg rc=%d\n",
+                   name.c_str(), size_rc, jw, jh, rc1);
+    if (rc1 != 0)
+      drawIconPlaceholder(name, x, y, bg);
     free(jbuf);
     return;
   }
@@ -244,7 +274,11 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
   uint16_t* sbuf = nullptr;
   if (psramFound()) sbuf = (uint16_t*) ps_malloc((size_t)sw * sh * 2);
   if (!sbuf)        sbuf = (uint16_t*) malloc((size_t)sw * sh * 2);
-  if (!sbuf) { free(jbuf); tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_RED); return; }
+  if (!sbuf) {
+    Serial.printf("[ICON] %s sbuf malloc failed (%dx%d, %u bytes, psram=%d)\n",
+                   name.c_str(), sw, sh, (unsigned)((size_t)sw*sh*2), psramFound());
+    free(jbuf); drawIconPlaceholder(name, x, y, bg); return;
+  }
 
   g_dec = {sbuf, sw, sh};
   TJpgDec.setJpgScale(dec_scale);
@@ -253,7 +287,11 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
   free(jbuf);
   g_dec.px = nullptr;
 
-  if (rc != 0) { free(sbuf); tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_RED); return; }
+  if (rc != 0) {
+    Serial.printf("[ICON] %s drawJpg rc=%d (jw=%u jh=%u dec_scale=%u sw=%d sh=%d)\n",
+                   name.c_str(), rc, jw, jh, dec_scale, sw, sh);
+    free(sbuf); drawIconPlaceholder(name, x, y, bg); return;
+  }
 
   uint16_t* dbuf = (uint16_t*) malloc((size_t)ICON_SIZE_PX * ICON_SIZE_PX * 2);
   if (!dbuf) { free(sbuf); return; }
@@ -268,23 +306,51 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
 // ============================================================================
 void drawItemRow(int index, int y) {
   int w = tft.width();
+  int rowH = ROW_HEIGHT_PX - ROW_GAP_PX;
   uint16_t bg = (index % 2 == 0) ? TFT_BLACK : 0x18E3;
-  tft.fillRect(0, y, w, ROW_HEIGHT_PX, bg);
-  tft.fillRect(0, y, 4, ROW_HEIGHT_PX, confidenceColor(g_items[index].confidence));
+
+  // Gap below the row (between this row and the next) stays plain black.
+  tft.fillRect(0, y, w, ROW_HEIGHT_PX, TFT_BLACK);
+  tft.fillRect(0, y, w, rowH, bg);
+  tft.fillRect(0, y, 4, rowH, confidenceColor(g_items[index].confidence));
 
   int icon_x = SIDE_PADDING_PX;
-  int icon_y = y + (ROW_HEIGHT_PX - ICON_SIZE_PX) / 2;
+  int icon_y = y + (rowH - ICON_SIZE_PX) / 2;
   drawIcon(g_items[index].name, icon_x, icon_y, bg);
 
-  int text_x  = icon_x + ICON_SIZE_PX + 10;
-  int text_cy = y + ROW_HEIGHT_PX / 2;
+  int arrow_x   = w - ROW_ARROW_ZONE_PX;
+  int text_x    = icon_x + ICON_SIZE_PX + 10;
+  int text_right = arrow_x - 4;
+  int text_cy   = y + rowH / 2;
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_WHITE, bg);
   tft.setTextSize(2);
   tft.drawString(g_items[index].name, text_x, text_cy);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(TFT_CYAN, bg);
-  tft.drawString(g_items[index].quantity, w - SIDE_PADDING_PX, text_cy);
+  tft.drawString(g_items[index].quantity, text_right, text_cy);
+
+  // Show the earliest expiry date among all units.
+  String earliest = "";
+  for (int j = 0; j < g_items[index].expiry_count; j++) {
+    const String& e = g_items[index].expiries[j];
+    if (e.length() == 10 && (earliest == "" || e < earliest))
+      earliest = e;
+  }
+  if (earliest.length() == 10) {
+    String ddmmyyyy = earliest.substring(8, 10) + "-" + earliest.substring(5, 7) + "-" + earliest.substring(0, 4);
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_ORANGE, bg);
+    tft.drawString("Exp " + ddmmyyyy, text_right, text_cy + 14);
+  }
+
+  // Tappable "open details" arrow, right edge of the row.
+  tft.drawFastVLine(arrow_x, y + 6, rowH - 12, TFT_DARKGREY);
+  int ax = arrow_x + (ROW_ARROW_ZONE_PX - 18) / 2;
+  int ay = y + rowH / 2;
+  tft.fillTriangle(ax, ay - 12, ax, ay + 12, ax + 18, ay, TFT_LIGHTGREY);
+
+  tft.drawRect(0, y, w, rowH, TFT_DARKGREY);
 }
 
 void drawEmptyState() {
@@ -317,7 +383,16 @@ void renderInventory() {
     }
   }
 
-  drawFooter(g_updated_at.length() > 0
-               ? "Updated " + g_updated_at
-               : "Waiting for first scan...");
+  // Footer doubles as a "This Month" stats button.
+  int w2 = tft.width();
+  int fy = tft.height() - FOOTER_HEIGHT_PX;
+  tft.fillRect(0, fy, w2, FOOTER_HEIGHT_PX, TFT_DARKGREY);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
+  tft.setTextSize(1);
+  String upd = g_updated_at.length() > 0 ? "Updated " + g_updated_at : "Waiting for scan...";
+  tft.drawString(upd, SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_DARKGREY);
+  tft.drawString("This Month >", w2 - SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
 }

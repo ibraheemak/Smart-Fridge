@@ -15,7 +15,8 @@
 //   ILI9488 TFT:
 //     SDI/MOSI  ->  GPIO 23
 //     SCK       ->  GPIO 18
-//     CS        ->  GND       permanently selected (only SPI display on bus)
+//     CS        ->  GPIO 26   (was GND — moved so TFT_eSPI can deselect the
+//                              TFT while reading the XPT2046 touch chip)
 //     DC/RS     ->  GPIO 27
 //     RST       ->  GPIO 4    reset pulse on boot
 //     VCC+LED   ->  3V3
@@ -53,6 +54,22 @@
 #define RESET_HOLD_MS        3000
 
 // ----------------------------------------------------------------------------
+// HALL EFFECT DOOR SENSOR (US #10) — moved here from the CAM board
+// ----------------------------------------------------------------------------
+// 3-pin digital module. Hall DO -> GPIO 25. Magnet near = door closed.
+#define HALL_PIN               25
+#define DOOR_CLOSED_LEVEL      LOW    // LOW = magnet near = door closed
+#define DOOR_DEBOUNCE_MS       50     // require a stable reading this long
+#define DOOR_SETTLE_MS       1500     // wait after close before triggering scan
+
+// ----------------------------------------------------------------------------
+// UART LINK TO CAM BOARD — sends SCAN_TRIGGER on door close
+// ----------------------------------------------------------------------------
+#define UART_TX_PIN            17     // CH TX2 -> CAM GPIO 13 (RX)
+#define UART_RX_PIN            16     // unused — CAM never replies
+#define UART_BAUD             9600
+
+// ----------------------------------------------------------------------------
 // REFRESH
 // ----------------------------------------------------------------------------
 #define INVENTORY_POLL_INTERVAL_MS  15000   // poll Firestore every 15 s
@@ -67,9 +84,24 @@
 // ----------------------------------------------------------------------------
 #define HEADER_HEIGHT_PX    40
 #define FOOTER_HEIGHT_PX    24
-#define ROW_HEIGHT_PX       56
+#define ROW_HEIGHT_PX       76
+#define ROW_GAP_PX           6   // visual gap between item rows
+#define ROW_TAP_DEADZONE_PX  2   // touch dead zone near row borders (keep small — a
+                                  // larger value rejects taps across most of the row
+                                  // when calibration is slightly skewed)
+#define ROW_ARROW_ZONE_PX   60   // width of the tappable "open details" arrow area
+                                  // on the right edge of each item row
+#define TOP_ROW_HIT_EXTEND_PX 40 // extend row 0's tap zone up into the header to
+                                  // compensate for touch y-readings being low near
+                                  // the top edge of the panel
 #define SIDE_PADDING_PX     12
 #define MAX_ITEMS_DISPLAYED  32
+
+// ----------------------------------------------------------------------------
+// TOUCH (XPT2046)
+// ----------------------------------------------------------------------------
+#define TOUCH_DEBOUNCE_MS   300   // min ms between accepted touch events
+#define TOUCH_PRESSURE_THRESHOLD  200   // lower = lighter taps register (TFT_eSPI default is 600)
 
 // ----------------------------------------------------------------------------
 // FIREBASE STORAGE — item icons
