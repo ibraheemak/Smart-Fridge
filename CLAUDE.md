@@ -92,6 +92,7 @@ GPIO 19  — Touch DO (MISO)
 GPIO 23  — TFT MOSI + Touch DIN (shared)
 GPIO 25  — Hall door sensor DO   (US #10 — door-close auto scan, see door.h)
 GPIO 27  — TFT DC/RS
+GPIO 14  — Buzzer DO (active buzzer, door-open alert — see buzzer.h)
 GPIO 33  — DHT11 data
 ```
 > The CH board is a standard ESP32 devkit, so it has many more free pins than the
