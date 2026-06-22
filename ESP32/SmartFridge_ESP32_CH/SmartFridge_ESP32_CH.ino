@@ -175,6 +175,44 @@ bool fetchInventory() {
 }
 
 // ============================================================================
+// DOOR STATE — writes to fridges/{id}/sensors/door
+// ============================================================================
+void saveDoorState(bool closed) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  // Match the timestamp format the CAM board uses for sensors/temperature
+  // ("YYYY-MM-DD HH:MM:SS", local time) so the app shows both consistently.
+  time_t now = time(nullptr);
+  char ts[20];
+  strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
+
+  String url =
+    "https://firestore.googleapis.com/v1/projects/" +
+    String(FIREBASE_PROJECT_ID) +
+    "/databases/(default)/documents/fridges/" +
+    String(FRIDGE_ID) +
+    "/sensors/door?key=" +
+    String(FIREBASE_API_KEY);
+
+  String body =
+    "{\"fields\":{"
+    "\"state\":{\"stringValue\":\"" + String(closed ? "closed" : "open") + "\"},"
+    "\"updatedAt\":{\"stringValue\":\"" + String(ts) + "\"},"
+    "\"source\":{\"stringValue\":\"ESP32-CH\"}"
+    "}}";
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(5000);
+  if (!http.begin(client, url)) return;
+  http.addHeader("Content-Type", "application/json");
+  int code = http.PATCH(body);
+  http.end();
+  Serial.printf("[DOOR] Firestore -> %s (HTTP %d)\n", closed ? "closed" : "open", code);
+}
+
+// ============================================================================
 // WIFI
 // ============================================================================
 void checkResetButton() {
@@ -291,6 +329,10 @@ void loop() {
       delay(50);
     }
     uartSendScanTrigger();
+    saveDoorState(true);
+  }
+  if (doorJustOpened()) {
+    saveDoorState(false);
   }
 
   if (doorOpenTooLong()) {

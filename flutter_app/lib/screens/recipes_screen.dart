@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
 import '../services/gemini_service.dart';
 import '../theme/app_theme.dart';

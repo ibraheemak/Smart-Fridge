@@ -67,3 +67,19 @@ class TemperatureReading {
   bool get isAlert => temperatureC != null && (temperatureC! < 1 || temperatureC! > 8);
   bool get isOk => temperatureC != null && temperatureC! >= 1 && temperatureC! <= 8;
 }
+
+/// Door state from fridges/{id}/sensors/door
+/// Written by the CH board whenever the hall sensor detects open or close.
+class DoorStatus {
+  final String state;      // "open" or "closed"
+  final String updatedAt;
+
+  const DoorStatus({required this.state, required this.updatedAt});
+
+  bool get isOpen => state == 'open';
+
+  factory DoorStatus.fromMap(Map<String, dynamic> map) => DoorStatus(
+        state: map['state'] as String? ?? 'unknown',
+        updatedAt: map['updatedAt'] as String? ?? '',
+      );
+}

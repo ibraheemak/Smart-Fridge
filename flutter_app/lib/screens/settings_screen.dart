@@ -621,7 +621,8 @@ class _SwitchTile extends StatelessWidget {
           ),
           Switch(
             value: value,
-            activeColor: AppColors.primary,
+            thumbColor: WidgetStateProperty.resolveWith(
+                (s) => s.contains(WidgetState.selected) ? AppColors.primary : null),
             onChanged: onChanged,
           ),
         ],
