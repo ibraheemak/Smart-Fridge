@@ -43,6 +43,37 @@ String g_updated_at = "";
 int g_list_scroll = 0;
 
 // ============================================================================
+// Hebrew product name rendering
+//
+// TFT_eSPI's built-in fonts have no Hebrew glyphs, so a Hebrew name would
+// just render blank. Rather than embedding a Unicode font (which blew past
+// the flash partition size), Hebrew names show a placeholder on the TFT —
+// the real name is still stored correctly in Firestore and shown as-is in
+// the phone app.
+// ============================================================================
+
+// True if the UTF-8 string contains a Hebrew-block codepoint (U+0590-05FF),
+// i.e. a lead byte of 0xD6 or 0xD7 followed by a UTF-8 continuation byte.
+bool containsHebrew(const String& s) {
+  for (size_t i = 0; i + 1 < s.length(); i++) {
+    uint8_t b0 = s[i], b1 = s[i + 1];
+    if ((b0 == 0xD6 || b0 == 0xD7) && (b1 & 0xC0) == 0x80) return true;
+  }
+  return false;
+}
+
+// Drop-in replacement for tft.drawString(name, x, y) — shows a placeholder
+// for Hebrew names (no glyphs available on this display) instead of
+// drawing the raw text, which would render blank/garbage.
+void drawItemName(const String& name, int x, int y) {
+  if (containsHebrew(name)) {
+    tft.drawString("Hebrew name item - see in the phone app", x, y);
+    return;
+  }
+  tft.drawString(name, x, y);
+}
+
+// ============================================================================
 // Backlight
 // ============================================================================
 void backlightOn() {
@@ -378,7 +409,7 @@ void drawItemRow(int index, int y) {
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_WHITE, bg);
   tft.setTextSize(2);
-  tft.drawString(g_items[index].name, text_x, text_cy);
+  drawItemName(g_items[index].name, text_x, text_cy);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(TFT_CYAN, bg);
   tft.drawString(g_items[index].quantity, text_right, text_cy);

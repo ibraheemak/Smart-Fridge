@@ -80,6 +80,17 @@
 #define UART_BAUD             9600
 
 // ----------------------------------------------------------------------------
+// GM65 BARCODE SCANNER (US #15 — manual product scanner)
+// ----------------------------------------------------------------------------
+// 4-pin UART module (VCC/GND/TX/RX). GM65 TX -> ESP32 RX, GM65 RX -> ESP32 TX.
+// Module must be set to TTL-232 output (scan the "Series Output" config
+// barcode from its manual once — it defaults to USB out of the box).
+#define GM65_RX_PIN          33     // ESP32 RX2 <- GM65 TX
+#define GM65_TX_PIN          32     // ESP32 TX2 -> GM65 RX
+#define GM65_BAUD           9600
+#define GM65_IDLE_FLUSH_MS   100    // flush the read buffer after this much silence
+
+// ----------------------------------------------------------------------------
 // REFRESH
 // ----------------------------------------------------------------------------
 #define INVENTORY_POLL_INTERVAL_MS  15000   // poll Firestore every 15 s

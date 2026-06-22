@@ -245,7 +245,7 @@ void drawItemDetail(int idx) {
   tft.setTextDatum(ML_DATUM);
   tft.setTextSize(3);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString(it.name, text_x, icon_y + 12);
+  drawItemName(it.name, text_x, icon_y + 12);
 
   tft.setTextSize(2);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -297,7 +297,7 @@ void drawNewItemScreen(int item_idx, int expiry_idx) {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
-  tft.drawString(g_items[item_idx].name, w / 2, icon_y + ICON_SIZE_PX + 18);
+  drawItemName(g_items[item_idx].name, w / 2, icon_y + ICON_SIZE_PX + 18);
 
   // Unit label (unit #N)
   tft.setTextSize(1);
