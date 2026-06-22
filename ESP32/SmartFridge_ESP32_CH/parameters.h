@@ -61,6 +61,16 @@
 #define DOOR_CLOSED_LEVEL      LOW    // LOW = magnet near = door closed
 #define DOOR_DEBOUNCE_MS       50     // require a stable reading this long
 #define DOOR_SETTLE_MS       1500     // wait after close before triggering scan
+#define DOOR_OPEN_ALERT_MS  30000     // buzz after door open this long (30 s)
+
+// ----------------------------------------------------------------------------
+// BUZZER (US #10 — door-open alert)
+// ----------------------------------------------------------------------------
+// Active buzzer: HIGH = on. Wiring: buzzer+ -> GPIO 14, buzzer- -> GND.
+#define BUZZER_PIN             14
+#define BUZZER_DURATION_MS  10000     // total pulse duration (10 s)
+#define BUZZER_BEEP_ON_MS     300     // each beep ON time  (ms)
+#define BUZZER_BEEP_OFF_MS    200     // each beep OFF time (ms)
 
 // ----------------------------------------------------------------------------
 // UART LINK TO CAM BOARD — sends SCAN_TRIGGER on door close
@@ -68,6 +78,17 @@
 #define UART_TX_PIN            17     // CH TX2 -> CAM GPIO 13 (RX)
 #define UART_RX_PIN            16     // unused — CAM never replies
 #define UART_BAUD             9600
+
+// ----------------------------------------------------------------------------
+// GM65 BARCODE SCANNER (US #15 — manual product scanner)
+// ----------------------------------------------------------------------------
+// 4-pin UART module (VCC/GND/TX/RX). GM65 TX -> ESP32 RX, GM65 RX -> ESP32 TX.
+// Module must be set to TTL-232 output (scan the "Series Output" config
+// barcode from its manual once — it defaults to USB out of the box).
+#define GM65_RX_PIN          33     // ESP32 RX2 <- GM65 TX
+#define GM65_TX_PIN          32     // ESP32 TX2 -> GM65 RX
+#define GM65_BAUD           9600
+#define GM65_IDLE_FLUSH_MS   100    // flush the read buffer after this much silence
 
 // ----------------------------------------------------------------------------
 // REFRESH

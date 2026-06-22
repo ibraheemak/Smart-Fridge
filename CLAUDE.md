@@ -92,8 +92,13 @@ GPIO 19  — Touch DO (MISO)
 GPIO 23  — TFT MOSI + Touch DIN (shared)
 GPIO 25  — Hall door sensor DO   (US #10 — door-close auto scan, see door.h)
 GPIO 27  — TFT DC/RS
-GPIO 33  — DHT11 data
+GPIO 32  — UART TX2 (Serial2) ← GM65 barcode scanner RX, see gm65.h
+GPIO 14  — Buzzer DO (active buzzer, door-open alert — see buzzer.h)
+GPIO 33  — UART RX2 (Serial2) ← GM65 barcode scanner TX, see gm65.h
 ```
+> ⚠️ DHT11 was previously planned for GPIO 33 (see Sensor wiring quick
+> reference below) — that's now taken by the GM65 scanner. Pick a different
+> free pin (e.g. GPIO 14) when wiring up the DHT11.
 > The CH board is a standard ESP32 devkit, so it has many more free pins than the
 > CAM. Sensors that conflict with the camera bus can live here instead.
 
@@ -175,7 +180,7 @@ Flutter app (TODO)
 | 12 | Usage Analytics | ⚠️ Partial (data saved) | `feature/flutter-app` |
 | 13 | Shopping List | ❌ TODO | `feature/flutter-app` |
 | 14 | User Management | ❌ TODO | `feature/flutter-app` |
-| 15 | Manual Product Scanner | ❌ TODO | `feature/touch-expiry-input` |
+| 15 | Manual Product Scanner | ✅ Done | `feature/gm65-barcode-scanner` |
 
 ---
 
@@ -189,6 +194,32 @@ DHT11 DATA → GPIO 33   (free pin)
             + 10kΩ pull-up resistor between DATA and 3.3V
 ```
 Library: `DHT sensor library` by Adafruit
+
+### GM65 — Barcode Scanner (US #15) ✅ DONE
+UART module, wired to the **CH board**:
+```
+GM65 VCC  → 5V
+GM65 GND  → GND
+GM65 TX   → GPIO 33   (ESP32 RX2)
+GM65 RX   → GPIO 32   (ESP32 TX2)
+```
+- Module defaults to **USB** output — scan the "Series Output" config
+  barcode from its manual once to switch it to TTL-232/UART (otherwise it
+  beeps/decodes but never sends anything over TX). Default baud 9600, 8N1.
+- The module doesn't reliably send a CR/LF terminator after each scan, so
+  the read loop flushes its buffer on an idle gap (`GM65_IDLE_FLUSH_MS`)
+  instead of waiting for one.
+- On scan: looks up the barcode via the
+  [Open Food Facts API](https://openfoodfacts.github.io/openfoodfacts-server/api/)
+  (`world.openfoodfacts.org/api/v2/product/<barcode>.json`), then merges the
+  product name into `fridges/{fridge}/inventory/current` — incrementing
+  quantity if the item already exists, otherwise appending a new entry.
+  Mirrors the CAM board's fetch→rebuild→PATCH pattern so existing expiry
+  dates are preserved, and deliberately leaves `g_items` stale so the next
+  `fetchInventory()` poll's existing "new unit needs an expiry date" diff
+  picks up the scanned item automatically.
+- Implementation: `gm65.h` on the CH board. Isolated tester:
+  `Unit Tests/SmartFridge_ESP32_GM65/`.
 
 ### Hall Effect Sensor — Door Detection (US #10) ✅ DONE
 4-pin digital hall module, wired to the **CH board**:
