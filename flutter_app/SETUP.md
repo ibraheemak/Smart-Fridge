@@ -1,95 +1,124 @@
 # Smart Fridge App — Setup Guide
 
-## 1. Install Flutter (if not already)
+## Prerequisites
 
-https://docs.flutter.dev/get-started/install
+| Tool | Version | Install |
+|---|---|---|
+| Flutter | 3.x | https://docs.flutter.dev/get-started/install |
+| Java | 17 | `brew install openjdk@17` (Mac) |
+| Android Studio | latest | https://developer.android.com/studio |
 
-## 2. Generate native project files
+**Mac only — after installing Java 17**, add to your `~/.zshrc`:
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+```
+Then restart your terminal.
 
-Run once inside `flutter_app/`:
+---
+
+## Step 1 — Clone the repo & switch to the Flutter branch
 
 ```bash
+git clone https://github.com/ibraheemak/Smart-Fridge.git
+cd Smart-Fridge
+git checkout feature/flutter-app
 cd flutter_app
-flutter create . --project-name smart_fridge --no-overwrite
-flutter pub get
 ```
 
-## 3. Get google-services.json (Android) from Firebase
+---
 
-1. Go to **https://console.firebase.google.com**
-2. Open project **smartfridge-79217**
-3. Click the gear icon → **Project Settings**
-4. Scroll to **Your apps** → click **Add app** → choose **Android**
-5. Package name: `com.smartfridge.app` (or whatever you like)
-6. Click **Register app**
-7. Download **google-services.json**
-8. Place it at:
+## Step 2 — Get `google-services.json` from Firebase
+
+This file is **not in git** (gitignored for security). You need it to connect to Firestore and Auth.
+
+Ask a teammate for the file, or download it yourself:
+
+1. Go to **https://console.firebase.google.com** → project **smartfridge-79217**
+2. Click the ⚙️ gear → **Project Settings** → scroll to **Your apps**
+3. Click the Android app → **Download google-services.json**
+4. Place it here:
    ```
    flutter_app/android/app/google-services.json
    ```
 
-## 4. Get GoogleService-Info.plist (iOS) from Firebase — optional
+---
 
-Same steps but choose **iOS** app and download **GoogleService-Info.plist**.  
-Place it at `flutter_app/ios/Runner/GoogleService-Info.plist` using Xcode.
+## Step 3 — Enable Firebase Email/Password Auth (one-time, team admin only)
 
-## 5. Fill in firebase_options.dart
+> Skip if already done. The login screen will show an error if this hasn't been enabled.
 
-Open the downloaded **google-services.json** and copy these values into  
-`lib/firebase_options.dart` → `android` section:
+1. Firebase Console → **Authentication** → **Sign-in method**
+2. Enable **Email/Password** → Save
 
-| google-services.json field                        | firebase_options.dart field |
-|---------------------------------------------------|-----------------------------|
-| `client[0].api_key[0].current_key`                | `apiKey`                    |
-| `client[0].client_info.mobilesdk_app_id`          | `appId`                     |
-| `project_info.project_number`                     | `messagingSenderId`         |
+---
 
-`projectId` and `storageBucket` are already filled in.
+## Step 4 — Install Flutter packages
 
-## 6. Fill in config.dart
-
-Open `lib/config.dart` and set:
-
-```dart
-// Your Gemini API key — same as GEMINI_API_KEY in SECRETS.h
-static const String geminiApiKey = 'YOUR_ACTUAL_KEY_HERE';
-
-// Your ESP32-CAM's IP address shown in Serial Monitor on boot:
-// [WEB] http://192.168.x.x/latest.jpg
-static const String esp32CamBaseUrl = 'http://192.168.1.xxx';
+```bash
+flutter pub get
 ```
 
-## 7. Allow HTTP (camera image is served over HTTP, not HTTPS) ✅ Done
+---
 
-`android:usesCleartextTraffic="true"` and `<uses-permission INTERNET/>` are already  
-in `android/app/src/main/AndroidManifest.xml`. Nothing to do here.
+## Step 5 — Run the app
 
-## 8. Run the app
+Connect an Android phone via USB (developer mode on), or start an Android emulator, then:
 
 ```bash
 flutter run
 ```
 
+To build an APK to share or install manually:
+```bash
+flutter build apk --debug
+# Output: build/app/outputs/flutter-apk/app-debug.apk
+```
+
 ---
 
-## Screens
+## App overview
 
-| Screen | Description |
+### 5 main tabs
+| Tab | What it does |
 |---|---|
-| **Fridge** | Live inventory from Firestore — updates instantly after every door-close scan |
-| **Camera** | Fetches the latest photo from the ESP32-CAM over WiFi |
-| **History** | Timeline of past scans + bar chart of items per scan |
-| **Shopping** | Auto-generated shopping list + Gemini AI recipe suggestions |
+| **Home** | Dashboard — status cards, live fridge banner, quick actions, recent scans |
+| **Inventory** | All fridge items in a bento grid with freshness badges |
+| **Recipes** | Gemini AI recipe suggestions from current inventory |
+| **Shopping** | Shopping list (auto + manual) with AI suggestions and budget estimate |
+| **Settings** | Door/temp/camera/expiry settings + analytics, user management, logout |
 
-## Color theme
-
-Warm & Friendly — cream background (#FFF8F0), orange accent (#FF6B35), Poppins font.
-
-## Firestore paths used (read-only)
-
-| Path | Used by |
+### Sub-screens (pushed from the main tabs)
+| Screen | How to reach it |
 |---|---|
-| `fridges/fridge1/inventory/current` | Inventory screen (real-time listener) |
-| `fridges/fridge1/sensors/temperature` | Temperature card (real-time listener) |
-| `fridges/fridge1/scans/*` | History screen (last 20 scans) |
-| `basic-items/basic-items` | Shopping list reference |
+| Expiry Alerts | Home → quick actions, or Inventory banner |
+| Temperature Monitor | Home → temperature card, or Settings |
+| Analytics | Settings |
+| Live Camera View | Home → quick actions, or Settings |
+| User Management | Settings |
+| Login | Shown automatically when not signed in |
+
+---
+
+## Firestore paths used
+
+| Path | Purpose |
+|---|---|
+| `fridges/fridge1/inventory/current` | Live inventory (real-time stream) |
+| `fridges/fridge1/sensors/temperature` | Temperature & humidity (real-time stream) |
+| `fridges/fridge1/scans/*` | Scan history (last 20 scans) |
+| `basic-items/basic-items` | Canonical item names for shopping list |
+
+---
+
+## Key config (`lib/config.dart`)
+
+Most values are already set. The only thing to change per environment:
+
+```dart
+// Set to the ESP32-CAM's IP on your local WiFi.
+// Find it in Arduino Serial Monitor after flashing the CAM:
+// look for: [WEB] http://192.168.x.x/latest.jpg
+static const String esp32CamBaseUrl = 'http://192.168.1.100';
+```
+
+The Gemini API key and Firebase project IDs are already in place.

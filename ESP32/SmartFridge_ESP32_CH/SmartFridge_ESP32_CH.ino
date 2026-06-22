@@ -22,8 +22,8 @@
 #include "SECRETS.h"
 #include "parameters.h"
 #include "display.h"
-#include "stats.h"
 #include "touch.h"
+#include "stats.h"
 #include "door.h"
 #include "uart_link.h"
 
@@ -83,8 +83,12 @@ bool fetchInventory() {
   String body = http.getString();
   http.end();
 
+  // Default nesting limit (10) is too shallow once per-unit expiries are
+  // nested inside each item (fields > items > arrayValue > values > mapValue
+  // > fields > expiries > arrayValue > values > stringValue) — without this,
+  // parsing fails with TooDeep and the list silently appears empty.
   DynamicJsonDocument doc(8192);
-  if (deserializeJson(doc, body)) return false;
+  if (deserializeJson(doc, body, DeserializationOption::NestingLimit(20))) return false;
 
   JsonObject fields = doc["fields"];
   if (fields.isNull()) return false;

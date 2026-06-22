@@ -69,9 +69,11 @@ Suggest 3 recipes I can make. Return ONLY valid JSON, no markdown, no explanatio
 
     final res = await http
         .post(
-          Uri.parse(
-              '${AppConfig.geminiEndpoint}?key=${AppConfig.geminiApiKey}'),
-          headers: {'Content-Type': 'application/json'},
+          Uri.parse(AppConfig.geminiEndpoint),
+          headers: {
+            'Content-Type': 'application/json',
+            'X-goog-api-key': AppConfig.geminiApiKey,
+          },
           body: body,
         )
         .timeout(const Duration(seconds: 30));

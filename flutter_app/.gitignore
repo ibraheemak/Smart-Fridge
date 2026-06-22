@@ -47,3 +47,4 @@ app.*.map.json
 # Firebase credential files — never commit these
 google-services.json
 GoogleService-Info.plist
+lib/app_secrets.dart

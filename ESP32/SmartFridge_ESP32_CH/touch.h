@@ -23,6 +23,11 @@
 
 #include "display.h"
 
+// Defined in stats.h, included after this file — forward-declared here since
+// handleTouch() needs to trigger the stats screen on tap.
+bool fetchBoughtStats();
+void renderStatsScreen();
+
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
@@ -492,10 +497,9 @@ void handleTouch() {
 
   Serial.printf("[TOUCH] x=%d y=%d (corrected) view=%d\n", tx, ty, g_view);
 
-  // VIEW_STATS — tap anywhere in footer to go back.
+  // VIEW_STATS — same header "< Back" button as the item-detail page.
   if (g_view == VIEW_STATS) {
-    int footer_y = tft.height() - FOOTER_HEIGHT_PX;
-    if ((int)ty >= footer_y) { g_view = VIEW_LIST; renderInventory(); }
+    if (inBtn(btnBackHit, tx, ty)) { g_view = VIEW_LIST; renderInventory(); }
     return;
   }
 
@@ -505,34 +509,48 @@ void handleTouch() {
     if ((int)ty >= footer_y) {
       g_view = VIEW_STATS;
       showStatus("Loading stats...", "");
-      fetchConsumedStats();
+      fetchBoughtStats();
       renderStatsScreen();
       return;
     }
 
-    int list_top    = HEADER_HEIGHT_PX + 4;
-    int list_bottom = tft.height() - FOOTER_HEIGHT_PX - 4;
+    ListLayout l = computeListLayout();
+    if (ty < l.top || ty > l.bottom) return;
+
+    // Up/down scroll strips span the full width, independent of the
+    // right-edge "open details" arrow zone used by item rows.
+    if (l.show_up && ty >= l.up_y && ty < l.up_y + SCROLL_ARROW_H) {
+      g_list_scroll = max(0, g_list_scroll - l.rows_visible);
+      renderInventory();
+      return;
+    }
+    if (l.show_down && ty >= l.down_y && ty < l.down_y + SCROLL_ARROW_H) {
+      g_list_scroll = min(max(0, g_item_count - l.rows_visible), g_list_scroll + l.rows_visible);
+      renderInventory();
+      return;
+    }
 
     // Touch y-readings near the top edge come in lower than the actual tap
-    // position, so row 0's hit zone is extended up into the header (which
-    // has nothing tappable in list view) to compensate.
-    if (ty < list_top - TOP_ROW_HIT_EXTEND_PX || ty > list_bottom) return;
+    // position, so the first visible row's hit zone is extended up into the
+    // header to compensate — but only when there's no up-arrow strip there.
+    if (!l.show_up && ty < l.rows_y0 - TOP_ROW_HIT_EXTEND_PX) return;
 
     if (tx < tft.width() - ROW_ARROW_ZONE_PX) return;  // only the right-edge arrow opens details
 
-    int max_rows = (list_bottom - list_top) / ROW_HEIGHT_PX;
     int rel, row;
-    if (ty < list_top) {
+    if (ty < l.rows_y0) {
       row = 0;
       rel = 0;
     } else {
-      rel = (ty - list_top) % ROW_HEIGHT_PX;
-      row = (ty - list_top) / ROW_HEIGHT_PX;
+      rel = (ty - l.rows_y0) % ROW_HEIGHT_PX;
+      row = (ty - l.rows_y0) / ROW_HEIGHT_PX;
     }
-    if (row < 0 || row >= g_item_count || row >= max_rows) return;
+    if (row < 0 || row >= l.rows_visible) return;
+    int item_idx = g_list_scroll + row;
+    if (item_idx >= g_item_count) return;
     if (rel >= ROW_HEIGHT_PX - ROW_TAP_DEADZONE_PX) return;  // tapped the gap/border between rows
 
-    openItemDetail(row);
+    openItemDetail(item_idx);
     return;
   }
 

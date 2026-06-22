@@ -96,6 +96,7 @@
                                   // the top edge of the panel
 #define SIDE_PADDING_PX     12
 #define MAX_ITEMS_DISPLAYED  32
+#define SCROLL_ARROW_H       28  // height of the up/down list-scroll strips
 
 // ----------------------------------------------------------------------------
 // TOUCH (XPT2046)

@@ -10,7 +10,7 @@ import '../config.dart';
 /// Style is locked to "flat vector icon with bold black outline on white"
 /// so all items look like they belong to the same icon pack.
 class IconGeneratorService {
-  static const _model = 'gemini-2.0-flash-preview-image-generation';
+  static const _model = 'gemini-3.1-flash-image';
 
   // All icons in the same flat-vector style pack
   static const _prompt =
@@ -63,7 +63,7 @@ class IconGeneratorService {
           }
         ],
         'generationConfig': {
-          'responseModalities': ['IMAGE'],
+          'responseModalities': ['TEXT', 'IMAGE'],
         },
       });
 
@@ -71,11 +71,14 @@ class IconGeneratorService {
           .post(
             Uri.parse(
                 'https://generativelanguage.googleapis.com/v1beta'
-                '/models/$_model:generateContent?key=${AppConfig.geminiApiKey}'),
-            headers: {'Content-Type': 'application/json'},
+                '/models/$_model:generateContent'),
+            headers: {
+              'Content-Type': 'application/json',
+              'X-goog-api-key': AppConfig.geminiApiKey,
+            },
             body: body,
           )
-          .timeout(const Duration(seconds: 30));
+          .timeout(const Duration(seconds: 90));
 
       if (res.statusCode == 200) {
         final raw = jsonDecode(res.body) as Map<String, dynamic>;
@@ -85,7 +88,6 @@ class IconGeneratorService {
           final inline = part['inlineData'];
           if (inline != null) {
             final bytes = base64Decode(inline['data'] as String);
-            // Upload to Storage in the background — non-fatal if it fails
             _uploadToStorage(key, bytes);
             return bytes;
           }
