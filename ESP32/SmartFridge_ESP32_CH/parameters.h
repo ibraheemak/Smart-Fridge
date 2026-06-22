@@ -68,7 +68,9 @@
 // ----------------------------------------------------------------------------
 // Active buzzer: HIGH = on. Wiring: buzzer+ -> GPIO 14, buzzer- -> GND.
 #define BUZZER_PIN             14
-#define BUZZER_DURATION_MS   5000     // how long to buzz (5 s)
+#define BUZZER_DURATION_MS  10000     // total pulse duration (10 s)
+#define BUZZER_BEEP_ON_MS     300     // each beep ON time  (ms)
+#define BUZZER_BEEP_OFF_MS    200     // each beep OFF time (ms)
 
 // ----------------------------------------------------------------------------
 // UART LINK TO CAM BOARD — sends SCAN_TRIGGER on door close
