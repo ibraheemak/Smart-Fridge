@@ -3,53 +3,78 @@
 #include "parameters.h"
 
 // ============================================================================
-// Active buzzer — door-open alert (US #10)
+// Passive buzzer (KY-006) — door-open alert (US #10)
 //
 // Wiring:
-//   Buzzer +  ->  GPIO BUZZER_PIN (14)
-//   Buzzer -  ->  GND
+//   "+" / VCC  ->  3.3V
+//   "-" / GND  ->  GND
+//   "S"        ->  GPIO BUZZER_PIN (14)
 //
-// Pulsed mode: beeps ON/OFF repeatedly for BUZZER_DURATION_MS total.
-// Non-blocking — call updateBuzzer() every loop().
+// Uses tone() — passive buzzer needs a frequency signal, not just HIGH/LOW.
+// Pattern (mirrors the isolated unit test): beep-beep ... beep-beep ...
+// Non-blocking: call updateBuzzer() every loop().
 // ============================================================================
 
-static unsigned long buzzerEndAt    = 0;   // when the whole alert ends (0 = idle)
-static unsigned long buzzerNextAt   = 0;   // when to toggle next
-static bool          buzzerPinHigh  = false;
+// Beep pattern timing (ms) — matches the unit-test sketch
+#define BUZZ_FREQ        2000   // Hz
+#define BUZZ_BEEP_MS      150   // each beep duration
+#define BUZZ_GAP_MS       250   // gap between the two beeps in a pair
+#define BUZZ_PAUSE_MS    1500   // silence between pairs
 
-void initBuzzer() {
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
-  Serial.printf("[BUZZER] init — GPIO%d\n", BUZZER_PIN);
-}
+static unsigned long buzzerEndAt  = 0;   // when the whole alert ends (0 = idle)
+static unsigned long buzzerNextAt = 0;   // when to fire the next action
+static uint8_t       buzzerStep   = 0;   // which step in the beep pattern
 
-// Start pulsed buzzing for durationMs total. Safe to call while already buzzing.
-void buzzFor(unsigned long durationMs) {
-  buzzerEndAt   = millis() + durationMs;
-  buzzerNextAt  = millis();   // start first beep immediately
-  buzzerPinHigh = false;      // updateBuzzer() will flip to HIGH on first call
-  Serial.printf("[BUZZER] pulsed alert for %lu ms\n", durationMs);
-}
-
-// Call every loop() — handles ON/OFF toggling and final cutoff.
+// Steps: 0=beep1, 1=gap, 2=beep2, 3=pause, then repeat
 void updateBuzzer() {
-  if (buzzerEndAt == 0) return;   // idle
+  if (buzzerEndAt == 0) return;
 
   unsigned long now = millis();
 
-  // Time's up — ensure pin is LOW and reset state.
   if (now >= buzzerEndAt) {
-    digitalWrite(BUZZER_PIN, LOW);
-    buzzerEndAt   = 0;
-    buzzerPinHigh = false;
+    noTone(BUZZER_PIN);
+    buzzerEndAt = 0;
+    buzzerStep  = 0;
     Serial.println("[BUZZER] alert done");
     return;
   }
 
-  // Toggle at the right moment.
-  if (now >= buzzerNextAt) {
-    buzzerPinHigh = !buzzerPinHigh;
-    digitalWrite(BUZZER_PIN, buzzerPinHigh ? HIGH : LOW);
-    buzzerNextAt = now + (buzzerPinHigh ? BUZZER_BEEP_ON_MS : BUZZER_BEEP_OFF_MS);
+  if (now < buzzerNextAt) return;   // not yet time
+
+  switch (buzzerStep) {
+    case 0:                                    // first beep ON
+      tone(BUZZER_PIN, BUZZ_FREQ, BUZZ_BEEP_MS);
+      buzzerNextAt = now + BUZZ_GAP_MS;
+      buzzerStep   = 1;
+      break;
+    case 1:                                    // gap between beeps
+      // tone() already stopped (BUZZ_BEEP_MS < BUZZ_GAP_MS), nothing to do
+      buzzerNextAt = now + BUZZ_GAP_MS;
+      buzzerStep   = 2;
+      break;
+    case 2:                                    // second beep ON
+      tone(BUZZER_PIN, BUZZ_FREQ, BUZZ_BEEP_MS);
+      buzzerNextAt = now + BUZZ_GAP_MS;
+      buzzerStep   = 3;
+      break;
+    case 3:                                    // pause before next pair
+      noTone(BUZZER_PIN);
+      buzzerNextAt = now + BUZZ_PAUSE_MS;
+      buzzerStep   = 0;
+      break;
   }
+}
+
+void initBuzzer() {
+  pinMode(BUZZER_PIN, OUTPUT);
+  noTone(BUZZER_PIN);
+  Serial.printf("[BUZZER] init — GPIO%d\n", BUZZER_PIN);
+}
+
+// Start the beep-beep alert for durationMs total. Safe to call repeatedly.
+void buzzFor(unsigned long durationMs) {
+  buzzerEndAt  = millis() + durationMs;
+  buzzerNextAt = millis();
+  buzzerStep   = 0;
+  Serial.printf("[BUZZER] alert start — %lu ms\n", durationMs);
 }
