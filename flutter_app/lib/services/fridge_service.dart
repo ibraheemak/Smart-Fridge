@@ -19,6 +19,16 @@ class FridgeService {
           ? InventorySnapshot.fromMap(s.data()!)
           : null);
 
+  /// Live door state from hall sensor on the CH board.
+  /// Document: fridges/{id}/sensors/door  fields: state, updatedAt
+  static Stream<DoorStatus?> doorStream() => _fridgeRef
+      .collection('sensors')
+      .doc('door')
+      .snapshots()
+      .map((s) => s.exists && s.data() != null
+          ? DoorStatus.fromMap(s.data()!)
+          : null);
+
   /// Live temperature/humidity from DHT11 on the CH board.
   static Stream<TemperatureReading?> temperatureStream() => _fridgeRef
       .collection('sensors')

@@ -172,6 +172,41 @@ bool fetchInventory() {
 }
 
 // ============================================================================
+// DOOR STATE — writes to fridges/{id}/sensors/door
+// ============================================================================
+void saveDoorState(bool closed) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  time_t now = time(nullptr);
+  char ts[32];
+  strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
+
+  String url =
+    "https://firestore.googleapis.com/v1/projects/" +
+    String(FIREBASE_PROJECT_ID) +
+    "/databases/(default)/documents/fridges/" +
+    String(FRIDGE_ID) +
+    "/sensors/door?key=" +
+    String(FIREBASE_API_KEY);
+
+  String body =
+    "{\"fields\":{"
+    "\"state\":{\"stringValue\":\"" + String(closed ? "closed" : "open") + "\"},"
+    "\"updatedAt\":{\"stringValue\":\"" + String(ts) + "\"}"
+    "}}";
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(5000);
+  if (!http.begin(client, url)) return;
+  http.addHeader("Content-Type", "application/json");
+  int code = http.sendRequest("PATCH", body);
+  http.end();
+  Serial.printf("[DOOR] Firestore -> %s (HTTP %d)\n", closed ? "closed" : "open", code);
+}
+
+// ============================================================================
 // WIFI
 // ============================================================================
 void checkResetButton() {
@@ -280,6 +315,10 @@ void loop() {
     Serial.println("[DOOR] Closed — triggering CAM scan");
     delay(DOOR_SETTLE_MS);          // let door seal + items settle
     uartSendScanTrigger();
+    saveDoorState(true);
+  }
+  if (doorJustOpened()) {
+    saveDoorState(false);
   }
 
   delay(50);

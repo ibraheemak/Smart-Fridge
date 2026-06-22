@@ -159,10 +159,14 @@ class _StatusCardsRow extends StatelessWidget {
       child: StreamBuilder<TemperatureReading?>(
         stream: FridgeService.temperatureStream(),
         builder: (ctx, tempSnap) {
+          return StreamBuilder<DoorStatus?>(
+            stream: FridgeService.doorStream(),
+            builder: (ctx, doorSnap) {
           return StreamBuilder<InventorySnapshot?>(
             stream: FridgeService.inventoryStream(),
             builder: (ctx, invSnap) {
               final temp = tempSnap.data;
+              final door = doorSnap.data;
               final inv = invSnap.data;
               final total = inv?.items.length ?? 0;
               final low = inv?.items
@@ -192,8 +196,19 @@ class _StatusCardsRow extends StatelessWidget {
                   _StatusCard(
                     icon: Icons.door_front_door_rounded,
                     label: 'Door',
-                    value: 'Closed',
-                    status: _CardStatus.ok,
+                    value: door == null
+                        ? '—'
+                        : door.isOpen
+                            ? 'Open'
+                            : 'Closed',
+                    status: door == null
+                        ? _CardStatus.neutral
+                        : door.isOpen
+                            ? _CardStatus.alert
+                            : _CardStatus.ok,
+                    onTap: () => Navigator.push(ctx,
+                        MaterialPageRoute(
+                            builder: (_) => const TemperatureScreen())),
                   ),
                   const SizedBox(width: 12),
                   _StatusCard(
@@ -215,6 +230,8 @@ class _StatusCardsRow extends StatelessWidget {
                   const SizedBox(width: 4),
                 ],
               );
+            },
+          );
             },
           );
         },

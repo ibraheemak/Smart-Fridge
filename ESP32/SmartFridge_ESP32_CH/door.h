@@ -18,6 +18,7 @@
 static int           doorState     = HIGH;   // last confirmed (debounced) state
 static int           doorReading   = HIGH;   // last raw reading
 static unsigned long doorChangeMs  = 0;      // when the raw reading last changed
+static bool          doorOpenPending = false; // set when CLOSED→OPEN edge occurs
 
 void initDoorSensor() {
   pinMode(HALL_PIN, INPUT_PULLUP);
@@ -43,8 +44,16 @@ bool doorJustClosed() {
   if ((millis() - doorChangeMs) >= DOOR_DEBOUNCE_MS && reading != doorState) {
     int prev  = doorState;
     doorState = reading;
+    if (prev == DOOR_CLOSED_LEVEL && doorState != DOOR_CLOSED_LEVEL)
+      doorOpenPending = true;          // CLOSED → OPEN
     if (prev != DOOR_CLOSED_LEVEL && doorState == DOOR_CLOSED_LEVEL)
-      return true;
+      return true;                     // OPEN → CLOSED
   }
+  return false;
+}
+
+// Returns true exactly once per CLOSED -> OPEN transition.
+bool doorJustOpened() {
+  if (doorOpenPending) { doorOpenPending = false; return true; }
   return false;
 }

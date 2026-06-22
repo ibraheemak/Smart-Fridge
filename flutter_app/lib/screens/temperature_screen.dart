@@ -5,6 +5,96 @@ import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
 import '../theme/app_theme.dart';
 
+class _DoorStatusCard extends StatelessWidget {
+  const _DoorStatusCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DoorStatus?>(
+      stream: FridgeService.doorStream(),
+      builder: (context, snap) {
+        final door = snap.data;
+        final isOpen = door?.isOpen ?? false;
+        final hasData = door != null;
+
+        final color = isOpen ? AppColors.error : AppColors.secondary;
+        final icon = isOpen
+            ? Icons.door_front_door_rounded
+            : Icons.door_front_door_rounded;
+        final label = !hasData
+            ? 'Door — no data'
+            : isOpen
+                ? 'Door is OPEN'
+                : 'Door is closed';
+        final sub = door?.updatedAt.isNotEmpty == true
+            ? 'Updated: ${door!.updatedAt}'
+            : 'Waiting for sensor...';
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: hasData
+                ? color.withValues(alpha: 0.10)
+                : AppColors.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: hasData ? color.withValues(alpha: 0.35) : AppColors.outline,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: (hasData ? color : AppColors.outline).withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon,
+                    size: 22,
+                    color: hasData ? color : AppColors.outline),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label,
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: hasData ? color : AppColors.onSurfaceVariant)),
+                    const SizedBox(height: 2),
+                    Text(sub,
+                        style: const TextStyle(
+                            fontSize: 11, color: AppColors.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+              if (hasData)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    isOpen ? 'OPEN' : 'CLOSED',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: color),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 class TemperatureScreen extends StatelessWidget {
   const TemperatureScreen({super.key});
 
@@ -38,6 +128,10 @@ class TemperatureScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             child: Column(
               children: [
+                // Door status — live from hall sensor
+                const _DoorStatusCard(),
+                const SizedBox(height: 16),
+
                 // Gauge + humidity row
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
