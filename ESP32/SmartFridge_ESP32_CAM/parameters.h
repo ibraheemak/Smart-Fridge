@@ -23,6 +23,14 @@
 #define FRIDGE_ID  "fridge1"
 
 // ----------------------------------------------------------------------------
+// FIREBASE STORAGE — photo snapshots
+// ----------------------------------------------------------------------------
+// Bucket name (not a secret — appears in every download URL).
+#define FIREBASE_STORAGE_BUCKET  "smartfridge-79217.firebasestorage.app"
+// Retry interval for pending offline photos (ms)
+#define STORAGE_RETRY_INTERVAL_MS  30000
+
+// ----------------------------------------------------------------------------
 // CAMERA PINS (AI Thinker ESP32-CAM)
 // ----------------------------------------------------------------------------
 #define PWDN_GPIO_NUM     32

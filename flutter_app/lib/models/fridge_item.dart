@@ -68,6 +68,27 @@ class TemperatureReading {
   bool get isOk => temperatureC != null && temperatureC! >= 1 && temperatureC! <= 8;
 }
 
+/// Latest scan photo stored in Firebase Storage.
+/// Written by the CAM board to fridges/{id}/sensors/snapshot after each upload.
+/// url is a signed Firebase Storage download URL — works from any network.
+class FridgeSnapshot {
+  final String url;
+  final String timestamp;
+  final int itemCount;
+
+  const FridgeSnapshot({
+    required this.url,
+    required this.timestamp,
+    required this.itemCount,
+  });
+
+  factory FridgeSnapshot.fromMap(Map<String, dynamic> map) => FridgeSnapshot(
+        url: map['url'] as String? ?? '',
+        timestamp: map['timestamp'] as String? ?? '',
+        itemCount: (map['itemCount'] as num?)?.toInt() ?? 0,
+      );
+}
+
 /// Door state from fridges/{id}/sensors/door
 /// Written by the CH board whenever the hall sensor detects open or close.
 class DoorStatus {
