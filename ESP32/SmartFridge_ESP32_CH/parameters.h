@@ -61,6 +61,16 @@
 #define DOOR_CLOSED_LEVEL      LOW    // LOW = magnet near = door closed
 #define DOOR_DEBOUNCE_MS       50     // require a stable reading this long
 #define DOOR_SETTLE_MS       1500     // wait after close before triggering scan
+#define DOOR_OPEN_ALERT_MS  30000     // buzz after door open this long (30 s)
+
+// ----------------------------------------------------------------------------
+// BUZZER (US #10 — door-open alert)
+// ----------------------------------------------------------------------------
+// Active buzzer: HIGH = on. Wiring: buzzer+ -> GPIO 14, buzzer- -> GND.
+#define BUZZER_PIN             14
+#define BUZZER_DURATION_MS  10000     // total pulse duration (10 s)
+#define BUZZER_BEEP_ON_MS     300     // each beep ON time  (ms)
+#define BUZZER_BEEP_OFF_MS    200     // each beep OFF time (ms)
 
 // ----------------------------------------------------------------------------
 // UART LINK TO CAM BOARD — sends SCAN_TRIGGER on door close

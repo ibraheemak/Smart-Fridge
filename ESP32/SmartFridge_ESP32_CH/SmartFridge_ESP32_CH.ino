@@ -26,6 +26,7 @@
 #include "stats.h"
 #include "door.h"
 #include "uart_link.h"
+#include "buzzer.h"
 
 // ============================================================================
 // STATE
@@ -235,6 +236,7 @@ void setup() {
   configureTime();
   initDoorSensor();
   initUartLink();
+  initBuzzer();
 
   showStatus("Loading inventory", "");
   if (fetchInventory()) {
@@ -278,9 +280,21 @@ void loop() {
 
   if (doorJustClosed()) {
     Serial.println("[DOOR] Closed — triggering CAM scan");
-    delay(DOOR_SETTLE_MS);          // let door seal + items settle
+    // Keep buzzer updated during the settle wait so it doesn't overshoot.
+    unsigned long settleStart = millis();
+    while (millis() - settleStart < DOOR_SETTLE_MS) {
+      updateBuzzer();
+      delay(50);
+    }
     uartSendScanTrigger();
   }
+
+  if (doorOpenTooLong()) {
+    Serial.println("[DOOR] Open too long — buzzing!");
+    buzzFor(BUZZER_DURATION_MS);
+  }
+
+  updateBuzzer();
 
   delay(50);
 }
