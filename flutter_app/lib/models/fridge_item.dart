@@ -58,7 +58,7 @@ class TemperatureReading {
 
   factory TemperatureReading.fromMap(Map<String, dynamic> map) =>
       TemperatureReading(
-        temperatureC: (map['temperatureC'] as num?)?.toDouble(),
+        temperatureC: (map['temperature'] as num?)?.toDouble(),
         humidity: (map['humidity'] as num?)?.toDouble(),
         updatedAt: map['updatedAt'] as String? ?? '',
       );

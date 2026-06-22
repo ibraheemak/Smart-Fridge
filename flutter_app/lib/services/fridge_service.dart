@@ -64,9 +64,10 @@ class FridgeService {
 
   // ── Utilities ─────────────────────────────────────────────────────────────
 
-  /// Firebase Storage URL for item icon: icons/{name}.jpg
+  /// Firebase Storage URL for item icon: icons/{name}.png
   static String iconUrl(String itemName) {
-    final encoded = Uri.encodeComponent('icons/$itemName.jpg');
+    final key = itemName.toLowerCase().trim();
+    final encoded = Uri.encodeComponent('icons/$key.png');
     return 'https://firebasestorage.googleapis.com/v0/b'
         '/${AppConfig.storageBucket}/o/$encoded?alt=media';
   }

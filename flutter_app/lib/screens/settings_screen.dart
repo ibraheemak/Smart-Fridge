@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/fridge_service.dart';
+import '../services/icon_generator_service.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import 'analytics_screen.dart';
@@ -333,6 +335,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                       Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: _RegenerateIconsButton(),
+                      ),
+                      Padding(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                         child: SizedBox(
                           width: double.infinity,
@@ -648,6 +654,91 @@ class _StepButton extends StatelessWidget {
             color: onTap != null
                 ? AppColors.primary
                 : AppColors.outline),
+      ),
+    );
+  }
+}
+
+class _RegenerateIconsButton extends StatefulWidget {
+  @override
+  State<_RegenerateIconsButton> createState() =>
+      _RegenerateIconsButtonState();
+}
+
+class _RegenerateIconsButtonState extends State<_RegenerateIconsButton> {
+  bool _running = false;
+  String _status = '';
+
+  Future<void> _run() async {
+    setState(() {
+      _running = true;
+      _status = 'Loading inventory…';
+    });
+
+    try {
+      // Fetch current item names from Firestore (one-shot)
+      final snap = await FridgeService.inventoryStream().first;
+      final names = snap?.items.map((i) => i.name).toList() ?? [];
+
+      if (names.isEmpty) {
+        setState(() {
+          _status = 'No items in fridge.';
+          _running = false;
+        });
+        return;
+      }
+
+      setState(() => _status = 'Generating ${names.length} icons…');
+      await IconGeneratorService.regenerateAll(names);
+
+      if (mounted) {
+        setState(() {
+          _status = '${names.length} icons updated!';
+          _running = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('All icons regenerated with consistent style'),
+            backgroundColor: AppColors.secondary,
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _status = 'Failed — check connection.';
+          _running = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: _running ? null : _run,
+        icon: _running
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: AppColors.primary))
+            : const Icon(Icons.auto_fix_high_rounded,
+                color: AppColors.primary),
+        label: Text(
+          _running
+              ? _status
+              : 'Regenerate All Icons',
+          style: const TextStyle(color: AppColors.primary),
+        ),
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: AppColors.primary),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+        ),
       ),
     );
   }
