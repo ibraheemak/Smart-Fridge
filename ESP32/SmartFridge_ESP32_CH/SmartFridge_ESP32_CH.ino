@@ -177,9 +177,11 @@ bool fetchInventory() {
 void saveDoorState(bool closed) {
   if (WiFi.status() != WL_CONNECTED) return;
 
+  // Match the timestamp format the CAM board uses for sensors/temperature
+  // ("YYYY-MM-DD HH:MM:SS", local time) so the app shows both consistently.
   time_t now = time(nullptr);
-  char ts[32];
-  strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
+  char ts[20];
+  strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
 
   String url =
     "https://firestore.googleapis.com/v1/projects/" +
@@ -192,7 +194,8 @@ void saveDoorState(bool closed) {
   String body =
     "{\"fields\":{"
     "\"state\":{\"stringValue\":\"" + String(closed ? "closed" : "open") + "\"},"
-    "\"updatedAt\":{\"stringValue\":\"" + String(ts) + "\"}"
+    "\"updatedAt\":{\"stringValue\":\"" + String(ts) + "\"},"
+    "\"source\":{\"stringValue\":\"ESP32-CH\"}"
     "}}";
 
   WiFiClientSecure client;
@@ -201,7 +204,7 @@ void saveDoorState(bool closed) {
   http.setTimeout(5000);
   if (!http.begin(client, url)) return;
   http.addHeader("Content-Type", "application/json");
-  int code = http.sendRequest("PATCH", body);
+  int code = http.PATCH(body);
   http.end();
   Serial.printf("[DOOR] Firestore -> %s (HTTP %d)\n", closed ? "closed" : "open", code);
 }
