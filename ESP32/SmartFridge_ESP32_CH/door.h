@@ -15,11 +15,11 @@
 // simpler to reason about outside an ISR.
 // ============================================================================
 
-static int           doorState     = HIGH;   // last confirmed (debounced) state
-static int           doorReading   = HIGH;   // last raw reading
-static unsigned long doorChangeMs  = 0;      // when the raw reading last changed
-static unsigned long doorOpenSince = 0;      // millis() when door last opened (0 = closed)
-static bool          doorOpenPending = false; // set when CLOSED→OPEN edge occurs
+static int           doorState       = HIGH;   // last confirmed (debounced) state
+static int           doorReading     = HIGH;   // last raw reading
+static unsigned long doorChangeMs    = 0;      // when the raw reading last changed
+static bool          doorOpenPending = false;  // set when CLOSED→OPEN edge occurs (for Firestore)
+static unsigned long doorOpenSince   = 0;      // millis() when door last opened (for buzzer alert)
 
 void initDoorSensor() {
   pinMode(HALL_PIN, INPUT_PULLUP);
@@ -35,18 +35,20 @@ void initDoorSensor() {
 bool doorIsClosed() { return doorState == DOOR_CLOSED_LEVEL; }
 
 // Returns true once per alert cycle: door has been open >= DOOR_OPEN_ALERT_MS.
-// Resets the timer after firing so a second alert fires if door stays open longer.
+// Resets the timer after firing so a second alert fires if the door stays open.
 bool doorOpenTooLong() {
-  if (doorOpenSince == 0) return false;   // door is closed
+  if (doorOpenSince == 0) return false;
   if (millis() - doorOpenSince >= DOOR_OPEN_ALERT_MS) {
-    doorOpenSince = millis();             // reset — next alert in another 30 s
+    doorOpenSince = millis();   // reset — next alert fires in another interval
     return true;
   }
   return false;
 }
 
 // Debounced edge detector. Returns true exactly once per OPEN -> CLOSED
-// transition. Non-blocking; call every loop().
+// transition. Also sets doorOpenPending on CLOSED -> OPEN so doorJustOpened()
+// can fire and doorOpenSince tracks how long the door has been open.
+// Non-blocking; call every loop().
 bool doorJustClosed() {
   int reading = digitalRead(HALL_PIN);
 
@@ -58,16 +60,14 @@ bool doorJustClosed() {
   if ((millis() - doorChangeMs) >= DOOR_DEBOUNCE_MS && reading != doorState) {
     int prev  = doorState;
     doorState = reading;
+
     if (doorState == DOOR_CLOSED_LEVEL) {
-      doorOpenSince = 0;               // door closed — stop open timer
-      if (prev != DOOR_CLOSED_LEVEL) return true;
+      doorOpenSince = 0;              // door closed — stop open timer
+      if (prev != DOOR_CLOSED_LEVEL) return true;   // OPEN → CLOSED
     } else {
-      doorOpenSince = millis();        // door opened — start open timer
+      doorOpenSince   = millis();     // door opened — start open timer
+      doorOpenPending = true;         // CLOSED → OPEN — notify Firestore writer
     }
-    if (prev == DOOR_CLOSED_LEVEL && doorState != DOOR_CLOSED_LEVEL)
-      doorOpenPending = true;          // CLOSED → OPEN
-    if (prev != DOOR_CLOSED_LEVEL && doorState == DOOR_CLOSED_LEVEL)
-      return true;                     // OPEN → CLOSED
   }
   return false;
 }

@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:typed_data';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../config.dart';
@@ -14,41 +16,59 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
-  Uint8List? _imageBytes;
-  String _camUrl = AppConfig.esp32CamBaseUrl;
-  bool _loading = false;
-  bool _scanning = false;
-  String _error = '';
-  DateTime? _fetchedAt;
+  // Single Firestore subscription — avoids duplicate listeners
+  StreamSubscription<FridgeSnapshot?>? _snapshotSub;
+  FridgeSnapshot? _snapshot;
 
-  Future<void> _refresh() async {
-    if (_loading) return;
+  // Direct-from-ESP32 bytes (same-WiFi only, manual refresh)
+  Uint8List? _localBytes;
+  bool _loadingLocal = false;
+  bool _showLocal = false;    // true after user explicitly taps "From ESP32"
+  String _localError = '';
+
+  String _camUrl = AppConfig.esp32CamBaseUrl;
+  bool _scanning = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _snapshotSub = FridgeService.snapshotStream().listen((s) {
+      if (mounted) setState(() => _snapshot = s);
+    });
+  }
+
+  @override
+  void dispose() {
+    _snapshotSub?.cancel();
+    super.dispose();
+  }
+
+  // Fetch JPEG directly from ESP32 (works only on same WiFi as fridge)
+  Future<void> _refreshFromESP32() async {
+    if (_loadingLocal) return;
     setState(() {
-      _loading = true;
-      _error = '';
+      _loadingLocal = true;
+      _localError = '';
+      _showLocal = true;
     });
     try {
       final res = await http
           .get(Uri.parse('$_camUrl/latest.jpg'))
           .timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
-        setState(() {
-          _imageBytes = res.bodyBytes;
-          _fetchedAt = DateTime.now();
-          _error = '';
-        });
+        setState(() => _localBytes = res.bodyBytes);
       } else {
-        setState(
-            () => _error = 'No image yet — close the door to trigger a scan.');
+        setState(() => _localError =
+            'No image yet — close the door to trigger a scan.');
       }
     } catch (_) {
-      setState(() => _error =
+      setState(() => _localError =
           'Cannot reach ESP32-CAM.\n'
-          '• Check that your phone is on the same WiFi as the fridge.\n'
-          '• Tap the settings icon to update the IP address.\n'
+          '• Must be on the same WiFi as the fridge.\n'
+          '• Tap ⚙ to update the IP address.\n'
           '• Current: $_camUrl');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _loadingLocal = false);
     }
   }
 
@@ -62,19 +82,17 @@ class _CameraScreenState extends State<CameraScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('AI scan triggered! Updating inventory...'),
+            content: Text('AI scan triggered! Inventory will update shortly…'),
             backgroundColor: AppColors.secondary,
           ),
         );
-        // Reload image after scan
-        await Future.delayed(const Duration(seconds: 3));
-        await _refresh();
       }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Cannot reach ESP32-CAM to trigger scan.'),
+            content:
+                Text('Cannot reach ESP32-CAM. Scan on door close still works.'),
             backgroundColor: AppColors.error,
           ),
         );
@@ -95,9 +113,11 @@ class _CameraScreenState extends State<CameraScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Find the IP in the Arduino Serial Monitor on boot:\n[WEB] http://192.168.x.x/latest.jpg',
-              style: TextStyle(
-                  fontSize: 12, color: AppColors.onSurfaceVariant),
+              'Only needed for "From ESP32" — the cloud photo works anywhere.\n\n'
+              'Find the IP in Arduino Serial Monitor on boot:\n'
+              '[WEB] http://192.168.x.x/scan',
+              style:
+                  TextStyle(fontSize: 12, color: AppColors.onSurfaceVariant),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -121,9 +141,8 @@ class _CameraScreenState extends State<CameraScreen> {
             onPressed: () {
               setState(() => _camUrl = ctrl.text.trim());
               Navigator.pop(context);
-              _refresh();
             },
-            child: const Text('Connect'),
+            child: const Text('Save'),
           ),
         ],
       ),
@@ -140,7 +159,7 @@ class _CameraScreenState extends State<CameraScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Header ─────────────────────────────────────────────────
+              // ── Header ──────────────────────────────────────────────────
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -153,102 +172,61 @@ class _CameraScreenState extends State<CameraScreen> {
                         color: AppColors.primary),
                     tooltip: 'Set ESP32-CAM IP',
                   ),
-                  IconButton(
-                    onPressed: _loading ? null : _refresh,
-                    icon: _loading
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: AppColors.primary),
-                          )
-                        : const Icon(Icons.refresh_rounded,
-                            color: AppColors.primary),
-                    tooltip: 'Refresh',
-                  ),
                 ],
               ),
-              Text(
-                _camUrl,
-                style: const TextStyle(
-                    fontSize: 12, color: AppColors.onSurfaceVariant),
-              ),
-              const SizedBox(height: 16),
 
-              // ── Image frame ─────────────────────────────────────────────
+              // ── Photo frame ─────────────────────────────────────────────
               Expanded(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(20),
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      // Image / placeholder
-                      Container(
-                        color: AppColors.surfaceContainerHighest,
-                        child: _imageBytes != null
-                            ? InteractiveViewer(
-                                child: Image.memory(_imageBytes!,
-                                    fit: BoxFit.contain))
-                            : Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(32),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.videocam_rounded,
-                                        size: 72,
-                                        color: AppColors.outline,
-                                      ),
-                                      const SizedBox(height: 16),
-                                      Text(
-                                        _error.isEmpty
-                                            ? 'Tap the button below to\nload the latest fridge photo'
-                                            : _error,
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: _error.isEmpty
-                                              ? AppColors.onSurfaceVariant
-                                              : AppColors.error,
-                                          fontSize: 14,
-                                          height: 1.5,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
+                      Container(color: AppColors.surfaceContainerHighest),
+
+                      // Priority: direct ESP32 bytes → Firestore cloud photo → placeholder
+                      if (_showLocal && _localBytes != null)
+                        InteractiveViewer(
+                          child:
+                              Image.memory(_localBytes!, fit: BoxFit.contain),
+                        )
+                      else if (_snapshot != null &&
+                          _snapshot!.url.isNotEmpty)
+                        _FirestorePhoto(url: _snapshot!.url)
+                      else
+                        _Placeholder(
+                          loading: _snapshotSub != null && _snapshot == null,
+                          error: _localError,
+                        ),
+
+                      // Source badge
+                      Positioned(
+                        top: 12,
+                        right: 12,
+                        child: _showLocal && _localBytes != null
+                            ? const _Badge(
+                                label: 'DIRECT',
+                                color: AppColors.secondary)
+                            : _snapshot != null
+                                ? const _Badge(
+                                    label: 'CLOUD',
+                                    color: AppColors.primary)
+                                : const SizedBox.shrink(),
                       ),
 
-                      // LIVE badge (when image is loaded)
-                      if (_imageBytes != null)
+                      // Local error overlay (shown even when cloud photo is behind)
+                      if (_showLocal && _localError.isNotEmpty)
                         Positioned(
-                          top: 12,
-                          right: 12,
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
                           child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: AppColors.error,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: const [
-                                Icon(Icons.circle,
-                                    color: Colors.white, size: 6),
-                                SizedBox(width: 5),
-                                Text(
-                                  'LIVE',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 1,
-                                  ),
-                                ),
-                              ],
+                            color: AppColors.error.withValues(alpha: 0.88),
+                            padding: const EdgeInsets.all(12),
+                            child: Text(
+                              _localError,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12),
                             ),
                           ),
                         ),
@@ -257,37 +235,39 @@ class _CameraScreenState extends State<CameraScreen> {
                 ),
               ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
 
-              // Timestamp
-              if (_fetchedAt != null)
+              // ── Timestamp / item count ─────────────────────────────────
+              if (_snapshot != null)
                 Center(
                   child: Text(
-                    'Loaded at ${_time(_fetchedAt!)}  •  tap refresh to update',
+                    _snapshot!.itemCount > 0
+                        ? 'Last scan: ${_snapshot!.itemCount} items  •  ${_snapshot!.timestamp}'
+                        : 'Last scan: ${_snapshot!.timestamp}',
                     style: const TextStyle(
                         fontSize: 11, color: AppColors.onSurfaceVariant),
                   ),
                 ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
 
-              // Buttons row
+              // ── Action buttons ───────────────────────────────────────────
               Row(
                 children: [
                   Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _loading ? null : _refresh,
-                      icon: _loading
+                    child: OutlinedButton.icon(
+                      onPressed: _loadingLocal ? null : _refreshFromESP32,
+                      icon: _loadingLocal
                           ? const SizedBox(
-                              width: 18,
-                              height: 18,
+                              width: 16,
+                              height: 16,
                               child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.refresh_rounded),
-                      label: Text(
-                          _imageBytes == null ? 'Load Photo' : 'Refresh'),
-                      style: ElevatedButton.styleFrom(
+                                  strokeWidth: 2, color: AppColors.primary))
+                          : const Icon(Icons.wifi_rounded, size: 18),
+                      label: const Text('From ESP32'),
+                      style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: const BorderSide(color: AppColors.primary),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
@@ -299,12 +279,12 @@ class _CameraScreenState extends State<CameraScreen> {
                       onPressed: _scanning ? null : _runAiScan,
                       icon: _scanning
                           ? const SizedBox(
-                              width: 18,
-                              height: 18,
+                              width: 16,
+                              height: 16,
                               child: CircularProgressIndicator(
                                   strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.auto_awesome_rounded),
-                      label: Text(_scanning ? 'Scanning...' : 'Run AI Scan'),
+                          : const Icon(Icons.auto_awesome_rounded, size: 18),
+                      label: Text(_scanning ? 'Scanning…' : 'Run AI Scan'),
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.secondary,
                         padding: const EdgeInsets.symmetric(vertical: 14),
@@ -316,9 +296,9 @@ class _CameraScreenState extends State<CameraScreen> {
                 ],
               ),
 
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
 
-              // ── Insight cards ────────────────────────────────────────────
+              // ── Insight cards (inventory + temp summary) ─────────────────
               StreamBuilder<InventorySnapshot?>(
                 stream: FridgeService.inventoryStream(),
                 builder: (_, invSnap) {
@@ -385,7 +365,7 @@ class _CameraScreenState extends State<CameraScreen> {
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      'Low: ${low.map((i) => i.displayName).join(', ')}',
+                                      'Low confidence: ${low.map((i) => i.displayName).join(', ')}',
                                       style: const TextStyle(
                                           fontSize: 12,
                                           color: AppColors.error,
@@ -410,13 +390,114 @@ class _CameraScreenState extends State<CameraScreen> {
       ),
     );
   }
-
-  String _time(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:'
-      '${dt.minute.toString().padLeft(2, '0')}:'
-      '${dt.second.toString().padLeft(2, '0')}';
 }
 
+// ── Firebase Storage photo (cached, works from any network) ──────────────────
+class _FirestorePhoto extends StatelessWidget {
+  final String url;
+  const _FirestorePhoto({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return CachedNetworkImage(
+      imageUrl: url,
+      fit: BoxFit.contain,
+      fadeInDuration: const Duration(milliseconds: 300),
+      placeholder: (_, __) => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+      errorWidget: (_, __, ___) => const _Placeholder(
+        loading: false,
+        error: 'Could not load photo from cloud.',
+      ),
+    );
+  }
+}
+
+// ── Status badge ─────────────────────────────────────────────────────────────
+class _Badge extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _Badge({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            label == 'CLOUD' ? Icons.cloud_done_rounded : Icons.wifi_rounded,
+            color: Colors.white,
+            size: 10,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Placeholder / error ───────────────────────────────────────────────────────
+class _Placeholder extends StatelessWidget {
+  final bool loading;
+  final String error;
+  const _Placeholder({required this.loading, this.error = ''});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (loading)
+              const CircularProgressIndicator(color: AppColors.primary)
+            else
+              Icon(
+                error.isEmpty
+                    ? Icons.videocam_rounded
+                    : Icons.cloud_off_rounded,
+                size: 72,
+                color: AppColors.outline,
+              ),
+            const SizedBox(height: 16),
+            Text(
+              error.isNotEmpty
+                  ? error
+                  : 'Photo uploads here automatically\nafter every door-close scan.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: error.isNotEmpty
+                    ? AppColors.error
+                    : AppColors.onSurfaceVariant,
+                fontSize: 14,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Insight card ──────────────────────────────────────────────────────────────
 class _InsightCard extends StatelessWidget {
   final IconData icon;
   final Color color;
@@ -451,8 +532,7 @@ class _InsightCard extends StatelessWidget {
               children: [
                 Text(title,
                     style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.onSurfaceVariant)),
+                        fontSize: 11, color: AppColors.onSurfaceVariant)),
                 Text(value,
                     style: TextStyle(
                         fontSize: 18,
@@ -460,8 +540,7 @@ class _InsightCard extends StatelessWidget {
                         color: color)),
                 Text(subtitle,
                     style: const TextStyle(
-                        fontSize: 10,
-                        color: AppColors.onSurfaceVariant)),
+                        fontSize: 10, color: AppColors.onSurfaceVariant)),
               ],
             ),
           ),
