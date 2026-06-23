@@ -161,11 +161,12 @@ void renderStatsScreen() {
 
     tft.fillRoundRect(bar_x, y, bar_w, row_h, 8, color);
 
-    // Item name inside the bar.
+    // Item name inside the bar — truncated so it never spills past the bar
+    // edge into the count badge drawn just to the right of it.
     tft.setTextDatum(ML_DATUM);
     tft.setTextColor(TFT_BLACK, color);
     tft.setTextSize(1);
-    tft.drawString(g_bought[i].name, bar_x + 10, y + row_h / 2);
+    tft.drawString(truncateItemName(g_bought[i].name), bar_x + 10, y + row_h / 2);
 
     // Count badge to the right of the bar.
     String count_str = String(g_bought[i].count) + "x";

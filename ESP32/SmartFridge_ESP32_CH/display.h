@@ -62,15 +62,27 @@ bool containsHebrew(const String& s) {
   return false;
 }
 
+#define ITEM_NAME_MAX_CHARS 25
+
+// Caps name at ITEM_NAME_MAX_CHARS characters (including spaces) with a
+// trailing "..." so it never overruns into whatever is drawn to its right
+// (quantity, count badge, etc).
+String truncateItemName(const String& name) {
+  if (name.length() <= ITEM_NAME_MAX_CHARS) return name;
+  return name.substring(0, ITEM_NAME_MAX_CHARS) + "...";
+}
+
 // Drop-in replacement for tft.drawString(name, x, y) — shows a placeholder
 // for Hebrew names (no glyphs available on this display) instead of
-// drawing the raw text, which would render blank/garbage.
+// drawing the raw text, which would render blank/garbage. Long names are
+// capped at ITEM_NAME_MAX_CHARS with "..." so they never overlap whatever
+// is drawn to their right (e.g. the quantity/count text).
 void drawItemName(const String& name, int x, int y) {
   if (containsHebrew(name)) {
-    tft.drawString("Hebrew name item - see in the phone app", x, y);
+    tft.drawString(truncateItemName("Hebrew name item - see in the phone app"), x, y);
     return;
   }
-  tft.drawString(name, x, y);
+  tft.drawString(truncateItemName(name), x, y);
 }
 
 // ============================================================================
