@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -15,18 +16,34 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
+  // Single Firestore subscription — avoids duplicate listeners
+  StreamSubscription<FridgeSnapshot?>? _snapshotSub;
+  FridgeSnapshot? _snapshot;
+
   // Direct-from-ESP32 bytes (same-WiFi only, manual refresh)
   Uint8List? _localBytes;
   bool _loadingLocal = false;
-
-  // Tracks whether the user explicitly tapped "Refresh from ESP32"
-  bool _showLocal = false;
+  bool _showLocal = false;    // true after user explicitly taps "From ESP32"
+  String _localError = '';
 
   String _camUrl = AppConfig.esp32CamBaseUrl;
   bool _scanning = false;
-  String _localError = '';
 
-  // Fetch from ESP32 directly (works only on same WiFi as fridge)
+  @override
+  void initState() {
+    super.initState();
+    _snapshotSub = FridgeService.snapshotStream().listen((s) {
+      if (mounted) setState(() => _snapshot = s);
+    });
+  }
+
+  @override
+  void dispose() {
+    _snapshotSub?.cancel();
+    super.dispose();
+  }
+
+  // Fetch JPEG directly from ESP32 (works only on same WiFi as fridge)
   Future<void> _refreshFromESP32() async {
     if (_loadingLocal) return;
     setState(() {
@@ -48,7 +65,7 @@ class _CameraScreenState extends State<CameraScreen> {
       setState(() => _localError =
           'Cannot reach ESP32-CAM.\n'
           '• Must be on the same WiFi as the fridge.\n'
-          '• Check IP below or tap ⚙ to update it.\n'
+          '• Tap ⚙ to update the IP address.\n'
           '• Current: $_camUrl');
     } finally {
       if (mounted) setState(() => _loadingLocal = false);
@@ -74,7 +91,8 @@ class _CameraScreenState extends State<CameraScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Cannot reach ESP32-CAM. Scan on door close still works.'),
+            content:
+                Text('Cannot reach ESP32-CAM. Scan on door close still works.'),
             backgroundColor: AppColors.error,
           ),
         );
@@ -95,11 +113,11 @@ class _CameraScreenState extends State<CameraScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Only needed for "Refresh from ESP32".\n'
-              'Find the IP in the Arduino Serial Monitor on boot:\n'
-              '[WEB] http://192.168.x.x/latest.jpg',
-              style: TextStyle(
-                  fontSize: 12, color: AppColors.onSurfaceVariant),
+              'Only needed for "From ESP32" — the cloud photo works anywhere.\n\n'
+              'Find the IP in Arduino Serial Monitor on boot:\n'
+              '[WEB] http://192.168.x.x/scan',
+              style:
+                  TextStyle(fontSize: 12, color: AppColors.onSurfaceVariant),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -159,127 +177,103 @@ class _CameraScreenState extends State<CameraScreen> {
 
               // ── Photo frame ─────────────────────────────────────────────
               Expanded(
-                child: StreamBuilder<FridgeSnapshot?>(
-                  stream: FridgeService.snapshotStream(),
-                  builder: (context, snap) {
-                    final snapshot = snap.data;
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Container(color: AppColors.surfaceContainerHighest),
 
-                    return ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Container(
-                              color: AppColors.surfaceContainerHighest),
+                      // Priority: direct ESP32 bytes → Firestore cloud photo → placeholder
+                      if (_showLocal && _localBytes != null)
+                        InteractiveViewer(
+                          child:
+                              Image.memory(_localBytes!, fit: BoxFit.contain),
+                        )
+                      else if (_snapshot != null &&
+                          _snapshot!.url.isNotEmpty)
+                        _FirestorePhoto(url: _snapshot!.url)
+                      else
+                        _Placeholder(
+                          loading: _snapshotSub != null && _snapshot == null,
+                          error: _localError,
+                        ),
 
-                          // If user tapped "Refresh from ESP32" show local bytes
-                          if (_showLocal && _localBytes != null)
-                            InteractiveViewer(
-                              child: Image.memory(_localBytes!,
-                                  fit: BoxFit.contain),
-                            )
-                          // Firestore snapshot URL — works from any network
-                          else if (snapshot != null &&
-                              snapshot.url.isNotEmpty)
-                            _FirestorePhoto(snapshot: snapshot)
-                          // No data yet
-                          else
-                            _Placeholder(
-                              loading: snap.connectionState ==
-                                  ConnectionState.waiting,
-                              error: _localError,
-                            ),
-
-                          // Status badge
-                          Positioned(
-                            top: 12,
-                            right: 12,
-                            child: _showLocal && _localBytes != null
-                                ? _Badge(
-                                    label: 'DIRECT',
-                                    color: AppColors.secondary)
-                                : snapshot != null
-                                    ? _Badge(
-                                        label: 'CLOUD',
-                                        color: AppColors.primary)
-                                    : const SizedBox.shrink(),
-                          ),
-
-                          // Local error overlay
-                          if (_showLocal && _localError.isNotEmpty)
-                            Positioned(
-                              bottom: 0,
-                              left: 0,
-                              right: 0,
-                              child: Container(
-                                color: AppColors.error.withValues(alpha: 0.9),
-                                padding: const EdgeInsets.all(12),
-                                child: Text(_localError,
-                                    style: const TextStyle(
-                                        color: Colors.white, fontSize: 12)),
-                              ),
-                            ),
-                        ],
+                      // Source badge
+                      Positioned(
+                        top: 12,
+                        right: 12,
+                        child: _showLocal && _localBytes != null
+                            ? const _Badge(
+                                label: 'DIRECT',
+                                color: AppColors.secondary)
+                            : _snapshot != null
+                                ? const _Badge(
+                                    label: 'CLOUD',
+                                    color: AppColors.primary)
+                                : const SizedBox.shrink(),
                       ),
-                    );
-                  },
+
+                      // Local error overlay (shown even when cloud photo is behind)
+                      if (_showLocal && _localError.isNotEmpty)
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            color: AppColors.error.withValues(alpha: 0.88),
+                            padding: const EdgeInsets.all(12),
+                            child: Text(
+                              _localError,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
 
               const SizedBox(height: 10),
 
-              // ── Timestamp + source label ─────────────────────────────────
-              StreamBuilder<FridgeSnapshot?>(
-                stream: FridgeService.snapshotStream(),
-                builder: (_, snap) {
-                  final s = snap.data;
-                  if (s == null) return const SizedBox.shrink();
-                  final label = s.itemCount > 0
-                      ? '${s.itemCount} items  •  ${s.timestamp}'
-                      : s.timestamp;
-                  return Center(
-                    child: Text(
-                      'Last scan: $label',
-                      style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.onSurfaceVariant),
-                    ),
-                  );
-                },
-              ),
+              // ── Timestamp / item count ─────────────────────────────────
+              if (_snapshot != null)
+                Center(
+                  child: Text(
+                    _snapshot!.itemCount > 0
+                        ? 'Last scan: ${_snapshot!.itemCount} items  •  ${_snapshot!.timestamp}'
+                        : 'Last scan: ${_snapshot!.timestamp}',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.onSurfaceVariant),
+                  ),
+                ),
 
               const SizedBox(height: 12),
 
               // ── Action buttons ───────────────────────────────────────────
               Row(
                 children: [
-                  // Refresh directly from ESP32 (same-WiFi only)
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed:
-                          _loadingLocal ? null : _refreshFromESP32,
+                      onPressed: _loadingLocal ? null : _refreshFromESP32,
                       icon: _loadingLocal
                           ? const SizedBox(
                               width: 16,
                               height: 16,
                               child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppColors.primary))
-                          : const Icon(Icons.wifi_rounded,
-                              size: 18),
+                                  strokeWidth: 2, color: AppColors.primary))
+                          : const Icon(Icons.wifi_rounded, size: 18),
                       label: const Text('From ESP32'),
                       style: OutlinedButton.styleFrom(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 14),
-                        side: const BorderSide(
-                            color: AppColors.primary),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: const BorderSide(color: AppColors.primary),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
-                  // Trigger an AI scan
                   Expanded(
                     child: FilledButton.icon(
                       onPressed: _scanning ? null : _runAiScan,
@@ -288,16 +282,12 @@ class _CameraScreenState extends State<CameraScreen> {
                               width: 16,
                               height: 16,
                               child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white))
-                          : const Icon(Icons.auto_awesome_rounded,
-                              size: 18),
-                      label:
-                          Text(_scanning ? 'Scanning…' : 'Run AI Scan'),
+                                  strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.auto_awesome_rounded, size: 18),
+                      label: Text(_scanning ? 'Scanning…' : 'Run AI Scan'),
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.secondary,
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 14),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
@@ -402,18 +392,17 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 }
 
-// ── Firestore-backed photo (Firebase Storage URL, works on any network) ────────
+// ── Firebase Storage photo (cached, works from any network) ──────────────────
 class _FirestorePhoto extends StatelessWidget {
-  final FridgeSnapshot snapshot;
-  const _FirestorePhoto({required this.snapshot});
+  final String url;
+  const _FirestorePhoto({required this.url});
 
   @override
   Widget build(BuildContext context) {
     return CachedNetworkImage(
-      imageUrl: snapshot.url,
+      imageUrl: url,
       fit: BoxFit.contain,
       fadeInDuration: const Duration(milliseconds: 300),
-      // Show last cached version while loading
       placeholder: (_, __) => const Center(
         child: CircularProgressIndicator(color: AppColors.primary),
       ),
@@ -425,7 +414,7 @@ class _FirestorePhoto extends StatelessWidget {
   }
 }
 
-// ── Status badge (CLOUD / DIRECT) ────────────────────────────────────────────
+// ── Status badge ─────────────────────────────────────────────────────────────
 class _Badge extends StatelessWidget {
   final String label;
   final Color color;
@@ -443,9 +432,7 @@ class _Badge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            label == 'CLOUD'
-                ? Icons.cloud_done_rounded
-                : Icons.wifi_rounded,
+            label == 'CLOUD' ? Icons.cloud_done_rounded : Icons.wifi_rounded,
             color: Colors.white,
             size: 10,
           ),
@@ -465,7 +452,7 @@ class _Badge extends StatelessWidget {
   }
 }
 
-// ── Empty / loading placeholder ───────────────────────────────────────────────
+// ── Placeholder / error ───────────────────────────────────────────────────────
 class _Placeholder extends StatelessWidget {
   final bool loading;
   final String error;
@@ -545,8 +532,7 @@ class _InsightCard extends StatelessWidget {
               children: [
                 Text(title,
                     style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.onSurfaceVariant)),
+                        fontSize: 11, color: AppColors.onSurfaceVariant)),
                 Text(value,
                     style: TextStyle(
                         fontSize: 18,
@@ -554,8 +540,7 @@ class _InsightCard extends StatelessWidget {
                         color: color)),
                 Text(subtitle,
                     style: const TextStyle(
-                        fontSize: 10,
-                        color: AppColors.onSurfaceVariant)),
+                        fontSize: 10, color: AppColors.onSurfaceVariant)),
               ],
             ),
           ),

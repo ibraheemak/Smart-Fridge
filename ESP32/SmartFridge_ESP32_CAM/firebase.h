@@ -316,7 +316,9 @@ bool saveToFirebase(JsonDocument& items_doc) {
 bool saveSnapshotMetadata(const String& url, int itemCount) {
   if (WiFi.status() != WL_CONNECTED) return false;
 
-  StaticJsonDocument<512> doc;
+  // 1024: the Firebase Storage URL alone is ~165 chars; ArduinoJson needs
+  // room for the URL + other fields + internal tree overhead.
+  StaticJsonDocument<1024> doc;
   JsonObject fields = doc.createNestedObject("fields");
   fields["url"]["stringValue"]        = url;
   fields["timestamp"]["stringValue"]  = getFormattedTimestamp();
