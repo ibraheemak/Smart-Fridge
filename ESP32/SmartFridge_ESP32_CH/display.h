@@ -465,7 +465,8 @@ void renderInventory() {
     if (l.show_down) drawScrollArrow(l.down_y, false);
   }
 
-  // Footer doubles as a "This Month" stats button.
+  // Footer doubles as a "Scan" button (center) and a "This Month" stats
+  // button (right) — see handleTouch()'s VIEW_LIST footer hit-zones.
   int w2 = tft.width();
   int fy = tft.height() - FOOTER_HEIGHT_PX;
   tft.fillRect(0, fy, w2, FOOTER_HEIGHT_PX, TFT_DARKGREY);
@@ -474,6 +475,9 @@ void renderInventory() {
   tft.setTextSize(1);
   String upd = g_updated_at.length() > 0 ? "Updated " + g_updated_at : "Waiting for scan...";
   tft.drawString(upd, SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_GREENYELLOW, TFT_DARKGREY);
+  tft.drawString("[ Scan ]", w2 / 2, fy + FOOTER_HEIGHT_PX / 2);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_DARKGREY);
   tft.drawString("This Month >", w2 - SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
