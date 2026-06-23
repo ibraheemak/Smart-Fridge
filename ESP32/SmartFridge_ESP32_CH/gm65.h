@@ -29,14 +29,123 @@
 // inserts prototypes after that block) runs too late for pollGM65() below.
 bool fetchInventory();
 
-HardwareSerial GM65Serial(2);
+// UART1, not UART2 — uart_link.h's `Serial2` (door-close -> CAM SCAN_TRIGGER
+// link) already owns the ESP32's UART2 peripheral on GPIO 16/17. A second
+// HardwareSerial object constructed with the same peripheral number (2)
+// would silently fight over it: whichever .begin() runs last rewires UART2's
+// GPIO-matrix pin routing, so the other link's traffic ends up physically
+// transmitted on the wrong pins. GM65Serial must live on the one remaining
+// free peripheral, UART1, routed to GPIO 32/33 below.
+HardwareSerial GM65Serial(1);
 
 static String        g_gm65_buf;
 static unsigned long g_gm65_last_byte_ms = 0;
 
+// ----------------------------------------------------------------------------
+// Scan trigger state machine.
+//
+// The GM65 defaults to Continuous Mode — its laser/illumination never turns
+// off, so it constantly tries to decode whatever's in the lens and beeps on
+// any false-positive read (a label, an edge, anything that vaguely looks like
+// a barcode). initGM65() switches it to Command Triggered Mode (zone bit
+// 0x0000, see manual section 3.4/8.5) so it only scans when explicitly told
+// to — triggerGM65Scan() is wired to the "Scan" footer button in touch.h.
+//
+// On trigger, the module immediately echoes a fixed 7-byte ack frame
+// (0x02 0x00 0x00 0x01 0x00 0x33 0x31) before it starts scanning — pollGM65()
+// must swallow that frame so it isn't mistaken for barcode data.
+// ----------------------------------------------------------------------------
+enum Gm65State { GM65_IDLE, GM65_AWAITING_ACK, GM65_READING };
+
+static Gm65State     g_gm65_state       = GM65_IDLE;
+static unsigned long g_gm65_scan_started_ms = 0;
+static size_t        g_gm65_ack_matched = 0;
+
+static const uint8_t GM65_ACK[] = {0x02, 0x00, 0x00, 0x01, 0x00, 0x33, 0x31};
+
+// CRC_CCITT (poly 0x1021, init 0) exactly as specified in the GM65 manual
+// section 8.1 — covers [Types, Lens, Address-hi, Address-lo, Datas]. The
+// manual also documents an 0xAB 0xCD "skip CRC check" filler value, but it
+// isn't honored by this module's firmware in practice, so commands are
+// always sent with a real computed CRC instead.
+uint16_t gm65Crc(const uint8_t* data, size_t len) {
+  uint32_t crc = 0;
+  for (size_t b = 0; b < len; b++) {
+    for (uint8_t i = 0x80; i != 0; i >>= 1) {
+      crc <<= 1;
+      if (crc & 0x10000) crc ^= 0x11021;
+      if (data[b] & i)   crc ^= 0x1021;
+    }
+  }
+  return (uint16_t)crc;
+}
+
+// Builds and sends a "Write Zone Bit" frame (manual section 8.3) for a
+// single byte at `address`.
+void gm65WriteZoneBit(uint16_t address, uint8_t value) {
+  uint8_t body[] = {0x08, 0x01, (uint8_t)(address >> 8), (uint8_t)(address & 0xFF), value};
+  uint16_t crc = gm65Crc(body, sizeof(body));
+  uint8_t frame[] = {0x7E, 0x00, body[0], body[1], body[2], body[3], body[4],
+                      (uint8_t)(crc >> 8), (uint8_t)(crc & 0xFF)};
+  GM65Serial.write(frame, sizeof(frame));
+}
+
+// TEMPORARY diagnostic — confirms whether the module's binary command
+// channel (manual section 8) is reachable at all over the current wiring.
+// "Find baud rate" is a fixed, pre-verified byte sequence straight from
+// Appendix A (no CRC computed here, so a failure can't be a CRC bug). A
+// healthy module replies "02 00 00 02 39 01 SS SS" within a few ms. Remove
+// this block once mode-switching is confirmed working.
+void gm65DiagnosticPing() {
+  static const uint8_t find_baud_cmd[] = {0x7E, 0x00, 0x07, 0x01, 0x00, 0x2A, 0x02, 0xD8, 0x0F};
+  GM65Serial.write(find_baud_cmd, sizeof(find_baud_cmd));
+
+  unsigned long start = millis();
+  String hex;
+  while (millis() - start < 500) {
+    while (GM65Serial.available()) {
+      uint8_t b = GM65Serial.read();
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%02X ", b);
+      hex += buf;
+    }
+  }
+  if (hex.length() == 0) {
+    Serial.println("[GM65][DIAG] no response to 'find baud rate' — binary command channel is NOT reachable (check wiring/levels or this module's firmware may not support the documented protocol)");
+  } else {
+    Serial.printf("[GM65][DIAG] response: %s\n", hex.c_str());
+  }
+}
+
 void initGM65() {
   GM65Serial.begin(GM65_BAUD, SERIAL_8N1, GM65_RX_PIN, GM65_TX_PIN);
   g_gm65_buf.reserve(64);
+
+  // Give the module's own MCU time to finish booting before talking to it —
+  // commands sent too early are silently dropped (writes have no ack).
+  delay(300);
+
+  gm65DiagnosticPing();
+
+  // Switch to Command Triggered Mode (zone bit 0x0000 = 0xD5: LED-on-success,
+  // mute off, standard aim/illumination, mode bits 01 = command triggered).
+  gm65WriteZoneBit(0x0000, 0xD5);
+}
+
+// Starts a single scan window: per manual section 3.4, in Command Triggered
+// Mode the module begins reading when bit0 of zone bit 0x0002 is written 1.
+// Call this from a user action (e.g. a touchscreen button) — never
+// automatically/continuously, or it just recreates the false-beep problem
+// Command Triggered Mode is meant to fix.
+void triggerGM65Scan() {
+  gm65WriteZoneBit(0x0002, 0x01);
+
+  g_gm65_buf = "";
+  g_gm65_ack_matched = 0;
+  g_gm65_state = GM65_AWAITING_ACK;
+  g_gm65_scan_started_ms = millis();
+
+  showStatus("Scanning...", "Point scanner at barcode");
 }
 
 // Looks up a barcode via Open Food Facts. Returns the product name, or ""
@@ -83,10 +192,19 @@ String lookupProductName(const String& barcode) {
   // Prefer the English name — the TFT's built-in font has no glyphs for
   // Hebrew/other non-Latin scripts, so a localized-only name would just
   // render as blank/garbage on screen. Falls back to whatever's there.
-  String name_en = doc["product"]["product_name_en"].as<String>();
-  String name    = name_en.length() > 0 ? name_en : doc["product"]["product_name"].as<String>();
+  //
+  // Field may be present but JSON null (not just absent) when Open Food
+  // Facts has no English name — ArduinoJson's as<String>() on a null
+  // JsonVariant returns the literal string "null", not "", so isNull() must
+  // be checked explicitly or a null product_name_en ends up displayed as
+  // the word "null" instead of falling back.
+  JsonVariant en_v   = doc["product"]["product_name_en"];
+  JsonVariant name_v = doc["product"]["product_name"];
+  String name_en   = en_v.isNull()   ? "" : en_v.as<String>();
+  String name_local = name_v.isNull() ? "" : name_v.as<String>();
+  String name = name_en.length() > 0 ? name_en : name_local;
   Serial.printf("[GM65][OFF] product_name_en=\"%s\" product_name=\"%s\" -> using \"%s\"\n",
-                name_en.c_str(), doc["product"]["product_name"].as<String>().c_str(), name.c_str());
+                name_en.c_str(), name_local.c_str(), name.c_str());
   return name;
 }
 
@@ -294,23 +412,53 @@ bool addScannedItemToInventory(const String& item_name) {
   return (code == 200 || code == 201);
 }
 
-// Call from loop(). Buffers incoming bytes from the GM65 and, once a
-// complete barcode arrives (flushed on an idle gap since the module doesn't
+// Call from loop(). Only reacts to bytes while a scan is armed (see
+// triggerGM65Scan()) — in Command Triggered Mode the module stays silent
+// otherwise, so stray bytes here would indicate noise, not a real scan.
+// Swallows the module's ack frame, then buffers the barcode digits until a
+// complete read arrives (flushed on an idle gap since the module doesn't
 // reliably send a CR/LF terminator), looks up the product name and adds it
 // to the inventory.
 void pollGM65() {
   while (GM65Serial.available()) {
-    char c = GM65Serial.read();
+    uint8_t b = GM65Serial.read();
     g_gm65_last_byte_ms = millis();
+
+    if (g_gm65_state == GM65_AWAITING_ACK) {
+      if (b == GM65_ACK[g_gm65_ack_matched]) {
+        g_gm65_ack_matched++;
+        if (g_gm65_ack_matched == sizeof(GM65_ACK)) g_gm65_state = GM65_READING;
+      } else {
+        g_gm65_ack_matched = (b == GM65_ACK[0]) ? 1 : 0;
+      }
+      continue;
+    }
+
+    if (g_gm65_state != GM65_READING) continue;  // not armed — ignore stray bytes
+
+    char c = (char)b;
     if (c == '\r' || c == '\n') continue;
     g_gm65_buf += c;
   }
 
-  if (g_gm65_buf.length() == 0) return;
+  if (g_gm65_state == GM65_IDLE) return;
+
+  if (g_gm65_buf.length() == 0) {
+    // Still waiting for the ack or for the first barcode byte — give up
+    // after the timeout so the UI doesn't show "Scanning..." forever.
+    if (millis() - g_gm65_scan_started_ms > GM65_SCAN_TIMEOUT_MS) {
+      g_gm65_state = GM65_IDLE;
+      showStatus("No barcode found", "");
+      delay(1200);
+      if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
+    }
+    return;
+  }
   if (millis() - g_gm65_last_byte_ms < GM65_IDLE_FLUSH_MS) return;
 
   String barcode = g_gm65_buf;
   g_gm65_buf = "";
+  g_gm65_state = GM65_IDLE;
 
   Serial.printf("[GM65] Scanned barcode: %s\n", barcode.c_str());
   showStatus("Scanned barcode", barcode);

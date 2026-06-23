@@ -28,6 +28,10 @@
 bool fetchBoughtStats();
 void renderStatsScreen();
 
+// Defined in gm65.h, included after this file — forward-declared here since
+// handleTouch() needs to arm a barcode scan on tap of the footer "Scan" button.
+void triggerGM65Scan();
+
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
@@ -504,13 +508,19 @@ void handleTouch() {
   }
 
   if (g_view == VIEW_LIST) {
-    // Tap the footer "📊 This Month" button to open stats.
+    // Footer has two tap zones: center "[ Scan ]" triggers a GM65 barcode
+    // scan, right "This Month >" opens stats. See renderInventory().
     int footer_y = tft.height() - FOOTER_HEIGHT_PX;
     if ((int)ty >= footer_y) {
-      g_view = VIEW_STATS;
-      showStatus("Loading stats...", "");
-      fetchBoughtStats();
-      renderStatsScreen();
+      int w = tft.width();
+      if (tx >= w * 0.35 && tx <= w * 0.65) {
+        triggerGM65Scan();
+      } else if (tx > w * 0.65) {
+        g_view = VIEW_STATS;
+        showStatus("Loading stats...", "");
+        fetchBoughtStats();
+        renderStatsScreen();
+      }
       return;
     }
 

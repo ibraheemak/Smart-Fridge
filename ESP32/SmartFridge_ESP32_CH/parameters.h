@@ -89,6 +89,7 @@
 #define GM65_TX_PIN          32     // ESP32 TX2 -> GM65 RX
 #define GM65_BAUD           9600
 #define GM65_IDLE_FLUSH_MS   100    // flush the read buffer after this much silence
+#define GM65_SCAN_TIMEOUT_MS 10000   // give up waiting for a read after this long (module's own single-read timeout is 5s, see gm65.h)
 
 // ----------------------------------------------------------------------------
 // REFRESH
