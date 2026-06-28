@@ -38,6 +38,7 @@
 // ============================================================================
 WebServer webServer(80);
 unsigned long lastTempReadMs = 0;
+bool wasOffline = false;
 
 // ============================================================================
 // WEB SERVER — /latest.jpg debug endpoint
@@ -119,7 +120,8 @@ void captureAndProcess() {
     return;
   }
 
-  if (WiFi.status() != WL_CONNECTED) {
+  bool wifiOk = (WiFi.status() == WL_CONNECTED) && (WiFi.localIP() != IPAddress(0,0,0,0));
+  if (!wifiOk) {
     Serial.println("[SCAN] No WiFi — saving photo to SPIFFS for later");
     savePhotoOffline(photo_data, photo_size);
     free(photo_data);
@@ -225,9 +227,17 @@ void setup() {
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[LOOP] WiFi lost — running offline");
+  bool wifiOk = (WiFi.status() == WL_CONNECTED) && (WiFi.localIP() != IPAddress(0,0,0,0));
+  if (!wifiOk) {
+    if (!wasOffline) {
+      Serial.println("[LOOP] WiFi lost — running offline");
+      wasOffline = true;
+    }
   } else {
+    if (wasOffline) {
+      Serial.println("[LOOP] WiFi restored");
+      wasOffline = false;
+    }
     replayOfflinePhotos();
   }
 

@@ -87,7 +87,7 @@
 // WIFI
 // ----------------------------------------------------------------------------
 #define WIFI_AP_NAME          "SmartFridge_CAM_Setup"
-#define WIFI_PORTAL_TIMEOUT_S 180
+#define WIFI_PORTAL_TIMEOUT_S 10
 #define RESET_BUTTON_PIN        0    // BOOT button — hold at power-on to wipe creds
 #define RESET_HOLD_MS        3000
 
