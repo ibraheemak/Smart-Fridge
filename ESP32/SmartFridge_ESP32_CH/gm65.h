@@ -467,7 +467,7 @@ void pollGM65() {
     // after the timeout so the UI doesn't show "Scanning..." forever.
     if (millis() - g_gm65_scan_started_ms > GM65_SCAN_TIMEOUT_MS) {
       g_gm65_state = GM65_IDLE;
-      showStatus("No barcode found", "");
+      showStatus("Not scanned", "Please try again");
       delay(1200);
       if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
     }
