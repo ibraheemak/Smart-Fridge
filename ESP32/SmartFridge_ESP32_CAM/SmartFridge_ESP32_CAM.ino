@@ -31,6 +31,7 @@
 #include "led_strip.h"
 #include "uart_link.h"
 #include "temperature.h"
+#include "offline_buffer.h"
 
 // ============================================================================
 // STATE
@@ -88,9 +89,7 @@ void initWiFi() {
     Serial.printf("[WIFI] Open AP \"%s\" -> http://192.168.4.1\n", WIFI_AP_NAME);
   });
   if (!wm.autoConnect(WIFI_AP_NAME)) {
-    Serial.println("[WIFI] Portal timed out, restarting");
-    delay(3000);
-    ESP.restart();
+    Serial.println("[WIFI] Portal timed out — continuing offline");
   }
   Serial.printf("[WIFI] Connected: %s (%s)\n",
                 WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
@@ -117,6 +116,13 @@ void captureAndProcess() {
 
   if (!photo_data) {
     Serial.println("[SCAN] Capture failed");
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[SCAN] No WiFi — saving photo to SPIFFS for later");
+    savePhotoOffline(photo_data, photo_size);
+    free(photo_data);
     return;
   }
 
@@ -204,6 +210,7 @@ void setup() {
   initWiFi();
   configureTime();
 
+  initOfflineBuffer();
   initFlash();
   initCamera();
   initLEDStrip();
@@ -219,9 +226,9 @@ void setup() {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[LOOP] WiFi lost — restarting");
-    delay(2000);
-    ESP.restart();
+    Serial.println("[LOOP] WiFi lost — running offline");
+  } else {
+    replayOfflinePhotos();
   }
 
   webServer.handleClient();
