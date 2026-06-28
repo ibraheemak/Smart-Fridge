@@ -35,6 +35,9 @@
 // ============================================================================
 String        g_last_signature = "";
 unsigned long g_last_poll_ms   = 0;
+unsigned long g_last_wifi_retry_ms = 0;
+String        g_wifi_ssid;
+String        g_wifi_pass;
 
 // Previous inventory snapshot — used to detect new units added since last scan.
 // Populated after the first successful fetch so we don't false-trigger on boot.
@@ -241,10 +244,20 @@ void initWiFi() {
     showStatus("Setup needed", "Join " WIFI_AP_NAME);
   });
   if (!wm.autoConnect(WIFI_AP_NAME)) {
-    showStatus("WiFi failed", "Restarting...");
-    delay(3000);
-    ESP.restart();
+    showStatus("WiFi unavailable", "Will retry...");
+    Serial.println("[WIFI] Portal timed out — continuing offline");
   }
+
+  // Capture whatever credentials WiFiManager has on file (saved from a
+  // previous successful connection, or just entered in the portal) so the
+  // retry loop can re-issue WiFi.begin() with them even if this boot never
+  // actually connected (e.g. router was briefly down and the portal timed
+  // out before it came back).
+  g_wifi_ssid = wm.getWiFiSSID();
+  g_wifi_pass = wm.getWiFiPass();
+
+  WiFi.mode(WIFI_STA);  // drop the AP WiFiManager may have left running
+
   Serial.printf("[WIFI] Connected: %s\n", WiFi.localIP().toString().c_str());
 }
 
@@ -292,9 +305,15 @@ void setup() {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
-    showStatus("WiFi lost", "Restarting...");
-    delay(2000);
-    ESP.restart();
+    if (millis() - g_last_wifi_retry_ms >= WIFI_RECONNECT_INTERVAL_MS) {
+      g_last_wifi_retry_ms = millis();
+      if (g_wifi_ssid.length() > 0) {
+        Serial.printf("[WIFI] Retrying connection to \"%s\"...\n", g_wifi_ssid.c_str());
+        WiFi.begin(g_wifi_ssid.c_str(), g_wifi_pass.c_str());
+      } else {
+        Serial.println("[WIFI] No saved credentials to retry");
+      }
+    }
   }
 
   if (millis() - g_last_poll_ms >= INVENTORY_POLL_INTERVAL_MS) {

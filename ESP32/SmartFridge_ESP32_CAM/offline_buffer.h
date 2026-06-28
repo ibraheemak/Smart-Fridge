@@ -9,12 +9,11 @@
 #include "SPIFFS.h"
 #include "esp_camera.h"
 
-// Maximum number of photos to queue.  Each JPEG is ~40-80 KB at JPEG quality
-// 20, so 5 photos ≈ 200-400 KB — well within the 1 MB SPIFFS partition that
-// the default ESP32 partition table provides.
-#define OFFLINE_MAX_PHOTOS   5
+// Only the most recent photo is kept — a new capture replaces whatever was
+// buffered before, so there is never more than one queued at a time.
 #define OFFLINE_DIR          "/offline"
 #define OFFLINE_EXT          ".jpg"
+#define OFFLINE_PATH         OFFLINE_DIR "/latest" OFFLINE_EXT
 
 static bool spiffs_ready = false;
 
@@ -23,10 +22,6 @@ bool initOfflineBuffer() {
         Serial.println("[OFFLINE] SPIFFS mount failed");
         return false;
     }
-    if (!SPIFFS.exists(OFFLINE_DIR)) {
-        // SPIFFS has no real directories — the "directory" is just a path
-        // prefix, so we only need to create it if it doesn't exist as a file.
-    }
     spiffs_ready = true;
     Serial.printf("[OFFLINE] SPIFFS ready — %u KB used / %u KB total\n",
                   (unsigned)(SPIFFS.usedBytes() / 1024),
@@ -34,43 +29,21 @@ bool initOfflineBuffer() {
     return true;
 }
 
-// Returns how many buffered photos are waiting.
-int offlinePhotoCount() {
-    if (!spiffs_ready) return 0;
-    int count = 0;
-    File root = SPIFFS.open(OFFLINE_DIR);
-    if (!root || !root.isDirectory()) return 0;
-    File f = root.openNextFile();
-    while (f) { count++; f = root.openNextFile(); }
-    return count;
+// Returns true if a buffered photo is waiting.
+bool offlinePhotoPending() {
+    return spiffs_ready && SPIFFS.exists(OFFLINE_PATH);
 }
 
-// Save a raw JPEG buffer to SPIFFS.  Returns true on success.
+// Save a raw JPEG buffer to SPIFFS, replacing whatever was buffered before.
+// Returns true on success.
 bool savePhotoOffline(const uint8_t* data, size_t size) {
     if (!spiffs_ready) return false;
 
-    int count = offlinePhotoCount();
-    if (count >= OFFLINE_MAX_PHOTOS) {
-        Serial.printf("[OFFLINE] Buffer full (%d photos) — dropping oldest\n", count);
-        // Delete the oldest file to make room.
-        File root = SPIFFS.open(OFFLINE_DIR);
-        if (root && root.isDirectory()) {
-            File oldest = root.openNextFile();
-            if (oldest) {
-                String path = oldest.path();
-                oldest.close();
-                SPIFFS.remove(path);
-                Serial.printf("[OFFLINE] Deleted %s\n", path.c_str());
-            }
-        }
-    }
+    if (SPIFFS.exists(OFFLINE_PATH)) SPIFFS.remove(OFFLINE_PATH);
 
-    // Build a unique filename from the current millis tick (good enough for
-    // ordering; a real timestamp would need NTP which isn't available offline).
-    String path = String(OFFLINE_DIR) + "/" + String(millis()) + OFFLINE_EXT;
-    File f = SPIFFS.open(path, FILE_WRITE);
+    File f = SPIFFS.open(OFFLINE_PATH, FILE_WRITE);
     if (!f) {
-        Serial.printf("[OFFLINE] Cannot open %s for write\n", path.c_str());
+        Serial.printf("[OFFLINE] Cannot open %s for write\n", OFFLINE_PATH);
         return false;
     }
     size_t written = f.write(data, size);
@@ -78,17 +51,16 @@ bool savePhotoOffline(const uint8_t* data, size_t size) {
     if (written != size) {
         Serial.printf("[OFFLINE] Write incomplete (%u/%u) — removing\n",
                       (unsigned)written, (unsigned)size);
-        SPIFFS.remove(path);
+        SPIFFS.remove(OFFLINE_PATH);
         return false;
     }
-    Serial.printf("[OFFLINE] Saved %s (%u bytes) — %d photo(s) queued\n",
-                  path.c_str(), (unsigned)size, offlinePhotoCount());
+    Serial.printf("[OFFLINE] Saved %s (%u bytes)\n", OFFLINE_PATH, (unsigned)size);
     return true;
 }
 
-// Called from loop() when WiFi is connected.  Sends each buffered photo
+// Called from loop() when WiFi is connected.  Sends the buffered photo
 // through Gemini → Firestore exactly as a live scan would, then deletes it.
-// Returns true if at least one photo was replayed.
+// Returns true if the photo was replayed.
 //
 // Forward-declares the two functions it needs from gemini.h / firebase.h so
 // this file can be included before them.
@@ -99,56 +71,40 @@ bool   saveToFirebase(JsonDocument&);
 bool   saveScanHistory(JsonDocument&);
 
 bool replayOfflinePhotos() {
-    if (!spiffs_ready) return false;
-    int count = offlinePhotoCount();
-    if (count == 0) return false;
+    if (!offlinePhotoPending()) return false;
 
-    Serial.printf("[OFFLINE] WiFi restored — replaying %d buffered photo(s)\n", count);
+    File f = SPIFFS.open(OFFLINE_PATH, FILE_READ);
+    if (!f) return false;
+    size_t size = f.size();
+    Serial.printf("[OFFLINE] WiFi restored — replaying %s (%u bytes)\n", OFFLINE_PATH, (unsigned)size);
 
-    File root = SPIFFS.open(OFFLINE_DIR);
-    if (!root || !root.isDirectory()) return false;
-
-    bool any_ok = false;
-    String basic_items = fetchBasicItems();
-
-    File f = root.openNextFile();
-    while (f) {
-        String path = f.path();
-        size_t size = f.size();
-        Serial.printf("[OFFLINE] Replaying %s (%u bytes)\n", path.c_str(), (unsigned)size);
-
-        uint8_t* buf = (uint8_t*)malloc(size);
-        if (!buf) {
-            Serial.println("[OFFLINE] malloc failed — skipping");
-            f = root.openNextFile();
-            continue;
-        }
-        f.read(buf, size);
+    uint8_t* buf = (uint8_t*)malloc(size);
+    if (!buf) {
+        Serial.println("[OFFLINE] malloc failed — keeping photo for next retry");
         f.close();
-
-        String response = sendToGemini(buf, size, basic_items);
-        free(buf);
-
-        if (response.length() == 0) {
-            Serial.println("[OFFLINE] Gemini returned empty — keeping photo for next retry");
-            f = root.openNextFile();
-            continue;
-        }
-
-        StaticJsonDocument<2048> detected_items;
-        if (!parseGeminiResponse(response, detected_items)) {
-            Serial.println("[OFFLINE] Parse failed — keeping photo");
-            f = root.openNextFile();
-            continue;
-        }
-
-        saveToFirebase(detected_items);
-        saveScanHistory(detected_items);
-        Serial.printf("[OFFLINE] Replayed OK — deleting %s\n", path.c_str());
-        SPIFFS.remove(path);
-        any_ok = true;
-
-        f = root.openNextFile();
+        return false;
     }
-    return any_ok;
+    f.read(buf, size);
+    f.close();
+
+    String basic_items = fetchBasicItems();
+    String response = sendToGemini(buf, size, basic_items);
+    free(buf);
+
+    if (response.length() == 0) {
+        Serial.println("[OFFLINE] Gemini returned empty — keeping photo for next retry");
+        return false;
+    }
+
+    StaticJsonDocument<2048> detected_items;
+    if (!parseGeminiResponse(response, detected_items)) {
+        Serial.println("[OFFLINE] Parse failed — keeping photo");
+        return false;
+    }
+
+    saveToFirebase(detected_items);
+    saveScanHistory(detected_items);
+    Serial.printf("[OFFLINE] Replayed OK — deleting %s\n", OFFLINE_PATH);
+    SPIFFS.remove(OFFLINE_PATH);
+    return true;
 }

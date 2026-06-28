@@ -38,7 +38,10 @@
 // ============================================================================
 WebServer webServer(80);
 unsigned long lastTempReadMs = 0;
+unsigned long lastWifiRetryMs = 0;
 bool wasOffline = false;
+String savedWifiSSID;
+String savedWifiPass;
 
 // ============================================================================
 // WEB SERVER — /latest.jpg debug endpoint
@@ -92,6 +95,17 @@ void initWiFi() {
   if (!wm.autoConnect(WIFI_AP_NAME)) {
     Serial.println("[WIFI] Portal timed out — continuing offline");
   }
+
+  // Capture whatever credentials WiFiManager has on file (saved from a
+  // previous successful connection, or just entered in the portal) so the
+  // retry loop can re-issue WiFi.begin() with them even if this boot never
+  // actually connected (e.g. router was briefly down and the portal timed
+  // out before it came back).
+  savedWifiSSID = wm.getWiFiSSID();
+  savedWifiPass = wm.getWiFiPass();
+
+  WiFi.mode(WIFI_STA);  // drop the AP WiFiManager may have left running
+
   Serial.printf("[WIFI] Connected: %s (%s)\n",
                 WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
 }
@@ -232,6 +246,15 @@ void loop() {
     if (!wasOffline) {
       Serial.println("[LOOP] WiFi lost — running offline");
       wasOffline = true;
+    }
+    if (millis() - lastWifiRetryMs >= WIFI_RECONNECT_INTERVAL_MS) {
+      lastWifiRetryMs = millis();
+      if (savedWifiSSID.length() > 0) {
+        Serial.printf("[WIFI] Retrying connection to \"%s\"...\n", savedWifiSSID.c_str());
+        WiFi.begin(savedWifiSSID.c_str(), savedWifiPass.c_str());
+      } else {
+        Serial.println("[WIFI] No saved credentials to retry");
+      }
     }
   } else {
     if (wasOffline) {
