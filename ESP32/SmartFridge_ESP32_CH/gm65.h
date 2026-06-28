@@ -59,27 +59,6 @@ void saveOfflineBarcode(const String& barcode) {
   Serial.printf("[GM65][OFFLINE] Saved barcode \"%s\" (%d in queue)\n", barcode.c_str(), g_offline_count);
 }
 
-// Called from loop() when WiFi is connected — processes every queued barcode
-// exactly as a live scan would (lookup → inventory → bought).
-void replayOfflineBarcodes() {
-  if (g_offline_count == 0) return;
-  Serial.printf("[GM65][OFFLINE] WiFi restored — replaying %d barcode(s)\n", g_offline_count);
-  for (int i = 0; i < g_offline_count; i++) {
-    String barcode = g_offline_barcodes[i];
-    Serial.printf("[GM65][OFFLINE] Replaying: %s\n", barcode.c_str());
-    showStatus("Syncing offline...", barcode);
-    String name = lookupProductName(barcode);
-    if (name.length() == 0) {
-      Serial.printf("[GM65][OFFLINE] Barcode %s not found — skipping\n", barcode.c_str());
-    } else {
-      bool ok = addScannedItemToInventory(name);
-      if (ok) saveBoughtItem(name);
-      Serial.printf("[GM65][OFFLINE] \"%s\" -> %s\n", name.c_str(), ok ? "OK" : "FAILED");
-    }
-  }
-  g_offline_count = 0;
-  if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
-}
 
 // ----------------------------------------------------------------------------
 // Scan trigger state machine.
@@ -522,5 +501,27 @@ void pollGM65() {
     delay(1500);
   }
 
+  if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
+}
+
+// Called from loop() when WiFi is restored — processes every queued barcode
+// exactly as a live scan would (lookup -> inventory -> bought).
+void replayOfflineBarcodes() {
+  if (g_offline_count == 0) return;
+  Serial.printf("[GM65][OFFLINE] WiFi restored — replaying %d barcode(s)\n", g_offline_count);
+  for (int i = 0; i < g_offline_count; i++) {
+    String barcode = g_offline_barcodes[i];
+    Serial.printf("[GM65][OFFLINE] Replaying: %s\n", barcode.c_str());
+    showStatus("Syncing offline...", barcode);
+    String name = lookupProductName(barcode);
+    if (name.length() == 0) {
+      Serial.printf("[GM65][OFFLINE] Barcode %s not found — skipping\n", barcode.c_str());
+    } else {
+      bool ok = addScannedItemToInventory(name);
+      if (ok) saveBoughtItem(name);
+      Serial.printf("[GM65][OFFLINE] \"%s\" -> %s\n", name.c_str(), ok ? "OK" : "FAILED");
+    }
+  }
+  g_offline_count = 0;
   if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
 }
