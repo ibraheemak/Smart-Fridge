@@ -31,18 +31,15 @@
 #include "led_strip.h"
 #include "uart_link.h"
 #include "temperature.h"
-#include "local_storage.h"
-#include "storage.h"
 
 // ============================================================================
 // STATE
 // ============================================================================
 WebServer webServer(80);
-unsigned long lastTempReadMs       = 0;
-unsigned long lastStorageRetryMs   = 0;
+unsigned long lastTempReadMs = 0;
 
 // ============================================================================
-// WEB SERVER — /latest.jpg  and  /scan  endpoints
+// WEB SERVER — /latest.jpg debug endpoint
 // ============================================================================
 void handleLatestJpeg() {
   if (latest_jpeg && latest_jpeg_size > 0) {
@@ -58,14 +55,8 @@ void handleLatestJpeg() {
     }
     client.flush();
   } else {
-    webServer.send(404, "text/plain", "No image captured yet.");
+    webServer.send(404, "text/plain", "No image captured yet. Send SCAN via serial first.");
   }
-}
-
-// /scan — triggered by the Flutter app's "Run AI Scan" button
-void handleScan() {
-  webServer.send(200, "text/plain", "Scan started");
-  captureAndProcess();
 }
 
 // ============================================================================
@@ -129,20 +120,13 @@ void captureAndProcess() {
     return;
   }
 
-  // Always save to SPIFFS first — guarantees we can upload later if WiFi drops
-  savePhotoPending(photo_data, photo_size);
-
-  // Upload photo to Firebase Storage (may fail if offline — will retry in loop)
-  Serial.println("[SCAN] Uploading photo to Firebase Storage...");
-  String snapshot_url = uploadSnapshot(photo_data, photo_size);
-
   Serial.println("[SCAN] Sending to Gemini...");
   String basic_items = fetchBasicItems();
   String response    = sendToGemini(photo_data, photo_size, basic_items);
   free(photo_data);
 
   if (response.length() == 0) {
-    Serial.println("[SCAN] No Gemini response — photo kept in SPIFFS for retry");
+    Serial.println("[SCAN] No Gemini response");
     return;
   }
 
@@ -157,17 +141,10 @@ void captureAndProcess() {
     Serial.printf("[DEBUG] %s\n", detected_items["description"].as<const char*>());
 #endif
 
-  int item_count = (int)detected_items["items"].as<JsonArray>().size();
   saveToFirebase(detected_items);
   saveScanHistory(detected_items);
-
-  // Persist snapshot URL to Firestore so the app can display it from anywhere
-  if (snapshot_url.length() > 0) {
-    saveSnapshotMetadata(snapshot_url, item_count);
-    clearPendingPhoto();  // upload succeeded — no retry needed
-  }
-
-  Serial.printf("[SCAN] Done — %d items written to Firestore\n", item_count);
+  Serial.printf("[SCAN] Done — %d items written to Firestore\n",
+                (int)detected_items["items"].as<JsonArray>().size());
 }
 
 // ============================================================================
@@ -232,13 +209,10 @@ void setup() {
   initLEDStrip();
   initUartLink();
   initTempSensor();
-  initLocalStorage();
 
   webServer.on("/latest.jpg", HTTP_GET, handleLatestJpeg);
-  webServer.on("/scan",       HTTP_GET, handleScan);
   webServer.begin();
   Serial.printf("[WEB] http://%s/latest.jpg\n", WiFi.localIP().toString().c_str());
-  Serial.printf("[WEB] http://%s/scan\n",       WiFi.localIP().toString().c_str());
 
   printHelp();
 }
@@ -264,25 +238,6 @@ void loop() {
 
   if (Serial.available())
     processSerialCommand(Serial.readStringUntil('\n'));
-
-  // Offline retry: if a scan was captured while WiFi was down, try to upload
-  // the saved JPEG to Firebase Storage every STORAGE_RETRY_INTERVAL_MS.
-  if (hasPendingPhoto() && millis() - lastStorageRetryMs >= STORAGE_RETRY_INTERVAL_MS) {
-    lastStorageRetryMs = millis();
-    Serial.println("[STORAGE] Retrying pending photo upload...");
-    size_t pending_size = 0;
-    uint8_t* pending_data = loadPendingPhoto(&pending_size);
-    if (pending_data && pending_size > 0) {
-      String url = uploadSnapshot(pending_data, pending_size);
-      free(pending_data);
-      if (url.length() > 0) {
-        saveSnapshotMetadata(url, 0);  // item count unknown for retried upload
-        clearPendingPhoto();
-      }
-    } else {
-      if (pending_data) free(pending_data);
-    }
-  }
 
   delay(50);
 }

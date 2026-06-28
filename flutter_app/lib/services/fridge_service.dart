@@ -19,18 +19,6 @@ class FridgeService {
           ? InventorySnapshot.fromMap(s.data()!)
           : null);
 
-  /// Latest fridge photo from Firebase Storage.
-  /// Document: fridges/{id}/sensors/snapshot  fields: url, timestamp, itemCount
-  /// URL is a Firebase Storage signed link — works from any network, not just
-  /// the same WiFi as the ESP32-CAM.
-  static Stream<FridgeSnapshot?> snapshotStream() => _fridgeRef
-      .collection('sensors')
-      .doc('snapshot')
-      .snapshots()
-      .map((s) => s.exists && s.data() != null
-          ? FridgeSnapshot.fromMap(s.data()!)
-          : null);
-
   /// Live door state from hall sensor on the CH board.
   /// Document: fridges/{id}/sensors/door  fields: state, updatedAt
   static Stream<DoorStatus?> doorStream() => _fridgeRef

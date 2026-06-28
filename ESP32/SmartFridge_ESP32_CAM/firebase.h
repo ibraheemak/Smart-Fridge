@@ -311,34 +311,6 @@ bool saveToFirebase(JsonDocument& items_doc) {
   return (code == 200 || code == 201);
 }
 
-// Write snapshot metadata to fridges/{id}/sensors/snapshot after a photo
-// is successfully uploaded to Firebase Storage.
-bool saveSnapshotMetadata(const String& url, int itemCount) {
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  // 1024: the Firebase Storage URL alone is ~165 chars; ArduinoJson needs
-  // room for the URL + other fields + internal tree overhead.
-  StaticJsonDocument<1024> doc;
-  JsonObject fields = doc.createNestedObject("fields");
-  fields["url"]["stringValue"]        = url;
-  fields["timestamp"]["stringValue"]  = getFormattedTimestamp();
-  fields["itemCount"]["integerValue"] = itemCount;
-  fields["source"]["stringValue"]     = "ESP32-CAM";
-
-  String payload;
-  serializeJson(doc, payload);
-  String fsUrl = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
-                 "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
-                 "/sensors/snapshot?key=" + String(FIREBASE_API_KEY);
-  HTTPClient http;
-  http.begin(fsUrl);
-  http.addHeader("Content-Type", "application/json");
-  int code = http.PATCH(payload);
-  http.end();
-  Serial.printf("[FIREBASE] snapshot metadata %s\n", (code==200||code==201) ? "OK" : "FAILED");
-  return (code == 200 || code == 201);
-}
-
 bool saveTemperature(float tempC, float humidity) {
   if (WiFi.status() != WL_CONNECTED) return false;
 

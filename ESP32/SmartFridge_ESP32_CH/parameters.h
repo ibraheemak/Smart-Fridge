@@ -75,10 +75,8 @@
 // ----------------------------------------------------------------------------
 // UART LINK TO CAM BOARD — sends SCAN_TRIGGER on door close
 // ----------------------------------------------------------------------------
-// Runs on hardware UART1 (see uart_link.h) — UART2 is taken by the GM65 below,
-// so the two can't share a peripheral. One-way TX only; RX is passed as -1 so
-// no GPIO is reserved for it (GPIO 16 is therefore free).
-#define UART_TX_PIN            17     // CH UART1 TX -> CAM GPIO 13 (RX)
+#define UART_TX_PIN            17     // CH TX2 -> CAM GPIO 13 (RX)
+#define UART_RX_PIN            16     // unused — CAM never replies
 #define UART_BAUD             9600
 
 // ----------------------------------------------------------------------------
