@@ -484,8 +484,10 @@ void pollGM65() {
 
   if (WiFi.status() != WL_CONNECTED) {
     saveOfflineBarcode(barcode);
-    showStatus("No WiFi — saved!", "Will sync when online");
-    delay(1500);
+    showStatus("No Internet", "Item saved, will sync when back online");
+    delay(5000);
+    g_view = VIEW_LIST;
+    renderInventory();
     return;
   }
 
