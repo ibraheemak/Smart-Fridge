@@ -35,6 +35,10 @@
 // ============================================================================
 String        g_last_signature = "";
 unsigned long g_last_poll_ms   = 0;
+unsigned long g_last_wifi_retry_ms = 0;
+bool          g_was_offline    = false;
+String        g_wifi_ssid;
+String        g_wifi_pass;
 
 // Previous inventory snapshot — used to detect new units added since last scan.
 // Populated after the first successful fetch so we don't false-trigger on boot.
@@ -241,11 +245,13 @@ void initWiFi() {
     showStatus("Setup needed", "Join " WIFI_AP_NAME);
   });
   if (!wm.autoConnect(WIFI_AP_NAME)) {
-    showStatus("WiFi failed", "Restarting...");
-    delay(3000);
-    ESP.restart();
+    showStatus("WiFi unavailable", "Running offline");
+    Serial.println("[WIFI] Portal timed out — continuing offline");
   }
-  Serial.printf("[WIFI] Connected: %s\n", WiFi.localIP().toString().c_str());
+  g_wifi_ssid = wm.getWiFiSSID();
+  g_wifi_pass = wm.getWiFiPass();
+  WiFi.mode(WIFI_STA);
+  Serial.printf("[WIFI] IP: %s\n", WiFi.localIP().toString().c_str());
 }
 
 void configureTime() {
@@ -291,10 +297,22 @@ void setup() {
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    showStatus("WiFi lost", "Restarting...");
-    delay(2000);
-    ESP.restart();
+  bool wifiOk = (WiFi.status() == WL_CONNECTED) && (WiFi.localIP() != IPAddress(0,0,0,0));
+
+  if (!wifiOk) {
+    if (!g_was_offline) {
+      g_was_offline = true;
+      Serial.println("[WIFI] Lost connection — running offline");
+    }
+    if (millis() - g_last_wifi_retry_ms >= WIFI_RECONNECT_INTERVAL_MS) {
+      g_last_wifi_retry_ms = millis();
+      Serial.printf("[WIFI] Retrying \"%s\"...\n", g_wifi_ssid.c_str());
+      WiFi.begin(g_wifi_ssid.c_str(), g_wifi_pass.c_str());
+    }
+  } else if (g_was_offline) {
+    g_was_offline = false;
+    Serial.println("[WIFI] Restored — syncing offline barcodes");
+    replayOfflineBarcodes();
   }
 
   if (millis() - g_last_poll_ms >= INVENTORY_POLL_INTERVAL_MS) {

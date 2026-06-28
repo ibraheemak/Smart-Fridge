@@ -41,6 +41,46 @@ HardwareSerial GM65Serial(1);
 static String        g_gm65_buf;
 static unsigned long g_gm65_last_byte_ms = 0;
 
+// ---------------------------------------------------------------------------
+// Offline barcode buffer — holds barcodes scanned while WiFi is absent.
+// Stored in RAM (simple array). Max 20 items; oldest are dropped if full.
+// ---------------------------------------------------------------------------
+#define GM65_OFFLINE_MAX 20
+static String g_offline_barcodes[GM65_OFFLINE_MAX];
+static int    g_offline_count = 0;
+
+void saveOfflineBarcode(const String& barcode) {
+  if (g_offline_count >= GM65_OFFLINE_MAX) {
+    Serial.println("[GM65][OFFLINE] Buffer full — dropping oldest barcode");
+    for (int i = 1; i < GM65_OFFLINE_MAX; i++) g_offline_barcodes[i-1] = g_offline_barcodes[i];
+    g_offline_count = GM65_OFFLINE_MAX - 1;
+  }
+  g_offline_barcodes[g_offline_count++] = barcode;
+  Serial.printf("[GM65][OFFLINE] Saved barcode \"%s\" (%d in queue)\n", barcode.c_str(), g_offline_count);
+}
+
+// Called from loop() when WiFi is connected — processes every queued barcode
+// exactly as a live scan would (lookup → inventory → bought).
+void replayOfflineBarcodes() {
+  if (g_offline_count == 0) return;
+  Serial.printf("[GM65][OFFLINE] WiFi restored — replaying %d barcode(s)\n", g_offline_count);
+  for (int i = 0; i < g_offline_count; i++) {
+    String barcode = g_offline_barcodes[i];
+    Serial.printf("[GM65][OFFLINE] Replaying: %s\n", barcode.c_str());
+    showStatus("Syncing offline...", barcode);
+    String name = lookupProductName(barcode);
+    if (name.length() == 0) {
+      Serial.printf("[GM65][OFFLINE] Barcode %s not found — skipping\n", barcode.c_str());
+    } else {
+      bool ok = addScannedItemToInventory(name);
+      if (ok) saveBoughtItem(name);
+      Serial.printf("[GM65][OFFLINE] \"%s\" -> %s\n", name.c_str(), ok ? "OK" : "FAILED");
+    }
+  }
+  g_offline_count = 0;
+  if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
+}
+
 // ----------------------------------------------------------------------------
 // Scan trigger state machine.
 //
@@ -462,6 +502,13 @@ void pollGM65() {
 
   Serial.printf("[GM65] Scanned barcode: %s\n", barcode.c_str());
   showStatus("Scanned barcode", barcode);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    saveOfflineBarcode(barcode);
+    showStatus("No WiFi — saved!", "Will sync when online");
+    delay(1500);
+    return;
+  }
 
   String name = lookupProductName(barcode);
   if (name.length() == 0) {
