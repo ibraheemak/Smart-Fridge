@@ -51,15 +51,12 @@
 #define LED_BRIGHTNESS     200
 
 // ----------------------------------------------------------------------------
-// UART LINK TO CH BOARD (US #10) — receives SCAN_TRIGGER on door close
+// ESP-NOW LINK TO CH BOARD (US #10) — receives SCAN_TRIGGER on door close
 // ----------------------------------------------------------------------------
-// The hall door sensor now lives on the CH board. GPIO 13 here is the old
-// door-sensor pin, repurposed as the UART RX line — it is free (TFT moved to
-// the CH board) and is NOT a boot-strapping pin. Do NOT use GPIO 12 here — it
-// selects flash voltage at boot; an externally-driven HIGH at power-on can
-// stop the CAM from booting.
-#define UART_RX_PIN            13     // CAM RX <- CH GPIO 17 (TX2)
-#define UART_BAUD             9600
+// The hall door sensor lives on the CH board; it sends SCAN_TRIGGER to this
+// board over ESP-NOW (no wiring — see espnow_link.h). Must match
+// ESPNOW_CHANNEL on the CH board.
+#define ESPNOW_CHANNEL          1
 
 // ----------------------------------------------------------------------------
 // DHT11 TEMPERATURE / HUMIDITY SENSOR (US #8, #9)

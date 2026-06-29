@@ -29,13 +29,10 @@
 // inserts prototypes after that block) runs too late for pollGM65() below.
 bool fetchInventory();
 
-// UART1, not UART2 — uart_link.h's `Serial2` (door-close -> CAM SCAN_TRIGGER
-// link) already owns the ESP32's UART2 peripheral on GPIO 16/17. A second
-// HardwareSerial object constructed with the same peripheral number (2)
-// would silently fight over it: whichever .begin() runs last rewires UART2's
-// GPIO-matrix pin routing, so the other link's traffic ends up physically
-// transmitted on the wrong pins. GM65Serial must live on the one remaining
-// free peripheral, UART1, routed to GPIO 32/33 below.
+// UART1, not UART2 — historically UART2 (`Serial2`, GPIO 16/17) was used by
+// the door-close -> CAM SCAN_TRIGGER link, now replaced by ESP-NOW (see
+// espnow_link.h), which freed UART2. GM65Serial stays on UART1/GPIO 32/33
+// since the wiring already matches and there's no reason to move it.
 HardwareSerial GM65Serial(1);
 
 static String        g_gm65_buf;

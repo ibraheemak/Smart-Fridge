@@ -3,33 +3,50 @@
 ## Two-board architecture (IMPORTANT)
 
 The system runs on **two separate ESP32 boards**. Most data flows through Firestore,
-but the door-close scan trigger flows over a direct **UART link** (see below).
+but the door-close scan trigger flows over a direct **ESP-NOW link** (see below) —
+no wires between the boards at all.
 
 | Board | Sketch folder | Responsibility |
 |---|---|---|
-| **ESP32-CAM** (AI Thinker) | `SmartFridge_ESP32_CAM` | Camera → Gemini AI → Firestore, WS2811 LED strip, receives `SCAN_TRIGGER` over UART |
-| **ESP32 devkit** (CH9102 USB) | `SmartFridge_ESP32_CH` | ILI9488 TFT + XPT2046 touch, polls Firestore and renders inventory, **hall door sensor**, sends `SCAN_TRIGGER` over UART |
+| **ESP32-CAM** (AI Thinker) | `SmartFridge_ESP32_CAM` | Camera → Gemini AI → Firestore, WS2811 LED strip, receives `SCAN_TRIGGER` over ESP-NOW |
+| **ESP32 devkit** (CH9102 USB) | `SmartFridge_ESP32_CH` | ILI9488 TFT + XPT2046 touch, polls Firestore and renders inventory, **hall door sensor**, sends `SCAN_TRIGGER` over ESP-NOW |
 
 > The TFT display used to live on the CAM board (old `SmartFridge_ESP32_Combined`,
 > now removed). It now runs on the separate CH devkit, which **freed GPIO 12/13/14
 > on the CAM board** for sensors.
 >
 > The hall door sensor used to live on the CAM board too. It has since **moved to
-> the CH board** — the CAM's GPIO 13 is now the UART RX pin for the CH→CAM link.
-> See `feature/uart-ch-cam`.
+> the CH board**. The CH→CAM trigger originally ran over a 2-wire UART link
+> (CAM GPIO 13 as RX); that's been replaced by ESP-NOW, so GPIO 13 on the CAM
+> and GPIO 17 on the CH are free again. See `feature/espnow-ch-cam`.
 
-## UART link — CH → CAM (door-close scan trigger)
+## ESP-NOW link — CH → CAM (door-close scan trigger)
 
-One-way, 2-wire link. CH detects door close (hall sensor) and sends a
-`SCAN_TRIGGER\n` command; CAM receives it and calls `captureAndProcess()`.
+One-way, wireless link — no wiring between the boards. CH detects door close
+(hall sensor) and unicasts an ESP-NOW `"SCAN_TRIGGER"` packet straight to the
+CAM's MAC address; CAM receives it in a recv callback and calls
+`captureAndProcess()`.
 
 ```
-CH  GPIO 17 (TX2) ──────────► CAM GPIO 13 (RX, Serial2)
-CH  GND           ─────────── CAM GND
+CH  (ESP-NOW unicast, "SCAN_TRIGGER") ──────────► CAM (MAC: CAM_MAC_ADDR)
 ```
 
-Baud: 9600. Implementation: `uart_link.h` on both boards (`uartSendScanTrigger()`
-on CH, `uartScanTriggerReceived()` on CAM).
+Both boards pin their WiFi radio to a fixed `ESPNOW_CHANNEL` (default 1, set
+in `parameters.h` on both boards) **before** trying to join the router.
+Reason: ESP-NOW only needs both radios on the same channel — it works with no
+router/internet at all — but if the channel were left to "whatever the
+router happens to negotiate," it would drift unpredictably while
+disconnected/reconnecting, which is exactly when the trigger most needs to
+keep working. If the router connection does succeed, the ESP32 WiFi stack
+switches to the AP's channel for as long as it's associated, and ESP-NOW
+keeps working either way (`peer.channel = 0`, i.e. "current channel").
+
+Setup: flash `ESP32/SmartFridge_ESP32_GetMac/` onto the CAM board once to
+read its MAC address, then paste it into `CAM_MAC_ADDR` in
+`ESP32/SmartFridge_ESP32_CH/parameters.h`.
+
+Implementation: `espnow_link.h` on both boards (`espnowSendScanTrigger()` on
+CH, `espnowScanTriggerReceived()` on CAM).
 
 ## What's already working (DO NOT break)
 
@@ -39,7 +56,7 @@ on CH, `uartScanTriggerReceived()` on CAM).
 | WS2811 LED strip (GPIO 2) | CAM `SmartFridge_ESP32_CAM` | ✅ Working |
 | WiFi + Firebase Firestore | both boards | ✅ Working |
 | Gemini AI food recognition | CAM `SmartFridge_ESP32_CAM` | ✅ Working |
-| Hall door sensor → UART → auto scan | CH → CAM (`uart_link.h`) | ✅ Working (US #10) |
+| Hall door sensor → ESP-NOW → auto scan | CH → CAM (`espnow_link.h`) | ✅ Working (US #10) |
 | ILI9488 TFT display (480×320) | CH `SmartFridge_ESP32_CH` | ✅ Working |
 | Inventory display on screen | CH `SmartFridge_ESP32_CH` | ✅ Working |
 
@@ -53,7 +70,7 @@ GPIO  2  — WS2811 LED strip data ← OCCUPIED
 GPIO  4  — Camera flash PWM       ← OCCUPIED
 GPIO  5  — Camera Y2
 GPIO 12  — free ✅  ⚠️ strapping (flash-voltage select) — do NOT use for an input that can be HIGH at boot
-GPIO 13  — UART RX (Serial2)      ← OCCUPIED (CH→CAM SCAN_TRIGGER link, see uart_link.h)
+GPIO 13  — free ✅ (was UART RX for the CH→CAM link — now ESP-NOW, see espnow_link.h)
 GPIO 14  — free ✅
 GPIO 15  — free ✅  ⚠️ strapping — silences boot log if LOW at boot (cosmetic)
 GPIO 16  — free ✅ (verify per board: PSRAM CS on some CAM revisions)
@@ -79,6 +96,7 @@ GPIO 39  — Camera Y7 (input only)
 - GPIO 16 — free ✅ (verify per board: PSRAM CS on some revisions)
 - GPIO 1 (TX) / GPIO 3 (RX) — serial, use carefully
 - GPIO 33 — free ✅ (was used in older sketch for TFT DC — now free)
+- GPIO 13 — free ✅ (was UART RX for the CH→CAM link — now ESP-NOW, wireless)
 
 > ⚠️ GPIOs 34, 35, 36, 39 are INPUT ONLY — no pull-up, no output.
 
@@ -86,7 +104,6 @@ GPIO 39  — Camera Y7 (input only)
 ```
 GPIO  4  — TFT RST
 GPIO  5  — Touch CS (XPT2046)
-GPIO 17  — UART TX2 (Serial2) ← CH→CAM SCAN_TRIGGER link, see uart_link.h
 GPIO 18  — TFT SCK + Touch CLK (shared)
 GPIO 19  — Touch DO (MISO)
 GPIO 23  — TFT MOSI + Touch DIN (shared)
@@ -98,7 +115,9 @@ GPIO 33  — UART RX2 (Serial2) ← GM65 barcode scanner TX, see gm65.h
 ```
 > ⚠️ DHT11 was previously planned for GPIO 33 (see Sensor wiring quick
 > reference below) — that's now taken by the GM65 scanner. Pick a different
-> free pin (e.g. GPIO 14) when wiring up the DHT11.
+> free pin (e.g. GPIO 14 or 17) when wiring up the DHT11.
+> GPIO 17 is free again — it was the UART TX2 line for the CH→CAM link,
+> which is now ESP-NOW (wireless), see espnow_link.h.
 > The CH board is a standard ESP32 devkit, so it has many more free pins than the
 > CAM. Sensors that conflict with the camera bus can live here instead.
 
@@ -135,13 +154,13 @@ main
 ESP32-CAM board  (SmartFridge_ESP32_CAM)
     ├── Camera → Gemini AI → Firestore (cloud)
     ├── LED strip (illumination during scan)
-    ├── UART RX (GPIO 13) ← receives SCAN_TRIGGER from CH, auto-triggers a scan
+    ├── ESP-NOW recv ← receives SCAN_TRIGGER from CH, auto-triggers a scan
     └── [TODO] more sensors below
 
 ESP32 devkit board  (SmartFridge_ESP32_CH)
     ├── TFT display + touch ← polls Firestore inventory/current
-    ├── Hall door sensor (GPIO 25) → door close → sends SCAN_TRIGGER over UART
-    └── UART TX (GPIO 17) → CAM GPIO 13
+    ├── Hall door sensor (GPIO 25) → door close → sends SCAN_TRIGGER over ESP-NOW
+    └── ESP-NOW unicast → CAM_MAC_ADDR
 
 Firestore (Firebase)
     ├── fridges/fridge1/inventory/current   ← live inventory
@@ -233,10 +252,12 @@ Logic: LOW = magnet present (door closed), HIGH = door open.
 - Tune the module's pot so DO toggles cleanly at the door gap.
 - Implementation: `door.h` on the CH board (debounced edge detector) +
   `parameters.h` (`HALL_PIN`, `DOOR_SETTLE_MS`). Door close → waits the
-  settle time → `uartSendScanTrigger()` sends `SCAN_TRIGGER` to the CAM over
-  UART (see `uart_link.h` on both boards).
-- Isolated tester: `ESP32/SmartFridge_ESP32_UART_Test_CH/` +
-  `ESP32/SmartFridge_ESP32_UART_Test_CAM/`.
+  settle time → `espnowSendScanTrigger()` unicasts `SCAN_TRIGGER` to the
+  CAM's MAC address over ESP-NOW (see `espnow_link.h` on both boards — no
+  wiring, see the "ESP-NOW link" section above).
+- `ESP32/SmartFridge_ESP32_UART_Test_CH/` + `ESP32/SmartFridge_ESP32_UART_Test_CAM/`
+  are the old UART-link testers, kept for history — superseded by the
+  ESP-NOW link above.
 
 ### HX711 + Load Cell — Weight Detection (US #1, #4)
 ```

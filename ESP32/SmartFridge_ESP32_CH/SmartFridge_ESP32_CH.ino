@@ -26,7 +26,7 @@
 #include "touch.h"
 #include "stats.h"
 #include "door.h"
-#include "uart_link.h"
+#include "espnow_link.h"
 #include "buzzer.h"
 #include "gm65.h"
 
@@ -288,7 +288,7 @@ void setup() {
   initWiFi();
   configureTime();
   initDoorSensor();
-  initUartLink();
+  initEspNowLink();
   initBuzzer();
   initGM65();
 
@@ -347,7 +347,7 @@ void loop() {
       updateBuzzer();
       delay(50);
     }
-    uartSendScanTrigger();
+    espnowSendScanTrigger();
     saveDoorState(true);
   }
   if (doorJustOpened()) {

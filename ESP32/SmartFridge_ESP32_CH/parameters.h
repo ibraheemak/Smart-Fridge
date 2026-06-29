@@ -74,11 +74,13 @@
 #define BUZZER_BEEP_OFF_MS    200     // each beep OFF time (ms)
 
 // ----------------------------------------------------------------------------
-// UART LINK TO CAM BOARD — sends SCAN_TRIGGER on door close
+// ESP-NOW LINK TO CAM BOARD — sends SCAN_TRIGGER on door close
 // ----------------------------------------------------------------------------
-#define UART_TX_PIN            17     // CH TX2 -> CAM GPIO 13 (RX)
-#define UART_RX_PIN            16     // unused — CAM never replies
-#define UART_BAUD             9600
+// Unicast to the CAM's MAC address (no wiring — see espnow_link.h). Flash
+// ESP32/SmartFridge_ESP32_GetMac/ onto the CAM board to read its MAC, then
+// fill it in below. Must match ESPNOW_CHANNEL on the CAM board.
+#define ESPNOW_CHANNEL          1
+static uint8_t CAM_MAC_ADDR[6] = {0x7C, 0x9E, 0xBD, 0x06, 0x2B, 0x7C};
 
 // ----------------------------------------------------------------------------
 // GM65 BARCODE SCANNER (US #15 — manual product scanner)

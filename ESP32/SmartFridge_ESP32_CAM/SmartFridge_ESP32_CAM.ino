@@ -29,7 +29,7 @@
 #include "firebase.h"
 #include "gemini.h"
 #include "led_strip.h"
-#include "uart_link.h"
+#include "espnow_link.h"
 #include "temperature.h"
 #include "offline_buffer.h"
 
@@ -230,7 +230,7 @@ void setup() {
   initFlash();
   initCamera();
   initLEDStrip();
-  initUartLink();
+  initEspNowLink();
   initTempSensor();
 
   webServer.on("/latest.jpg", HTTP_GET, handleLatestJpeg);
@@ -271,8 +271,8 @@ void loop() {
     readAndPublishTemperature();
   }
 
-  if (uartScanTriggerReceived()) {
-    Serial.println("[UART] SCAN_TRIGGER received — auto scan");
+  if (espnowScanTriggerReceived()) {
+    Serial.println("[ESPNOW] SCAN_TRIGGER received — auto scan");
     captureAndProcess();            // existing scan flow
   }
 
