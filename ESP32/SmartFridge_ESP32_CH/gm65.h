@@ -465,8 +465,9 @@ void pollGM65() {
     if (millis() - g_gm65_scan_started_ms > GM65_SCAN_TIMEOUT_MS) {
       g_gm65_state = GM65_IDLE;
       showStatus("Not scanned", "Please try again");
-      delay(1200);
-      if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
+      delay(3000);
+      g_view = VIEW_HOME;
+      renderHomeScreen();
     }
     return;
   }
