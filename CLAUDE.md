@@ -2,14 +2,16 @@
 
 ## Two-board architecture (IMPORTANT)
 
-The system runs on **two separate ESP32 boards**. Most data flows through Firestore,
-but the door-close scan trigger flows over a direct **ESP-NOW link** (see below) —
-no wires between the boards at all.
+The system runs on **N+1 ESP32 boards**: one CH display board, plus N
+ESP32-CAM boards (one per fridge shelf / "roof", currently N=2 — see
+"Multi-camera (roof) support" below). Most data flows through Firestore, but
+the door-close scan trigger flows over a direct **ESP-NOW link** (see below) —
+no wires between any of the boards at all.
 
 | Board | Sketch folder | Responsibility |
 |---|---|---|
-| **ESP32-CAM** (AI Thinker) | `SmartFridge_ESP32_CAM` | Camera → Gemini AI → Firestore, WS2811 LED strip, receives `SCAN_TRIGGER` over ESP-NOW |
-| **ESP32 devkit** (CH9102 USB) | `SmartFridge_ESP32_CH` | ILI9488 TFT + XPT2046 touch, polls Firestore and renders inventory, **hall door sensor**, sends `SCAN_TRIGGER` over ESP-NOW |
+| **ESP32-CAM** (AI Thinker) — one per roof | `SmartFridge_ESP32_CAM` | Camera → Gemini AI → Firestore (own roof doc), receives `SCAN_TRIGGER` broadcast over ESP-NOW. Roof 1 only: WS2811 LED strip + DHT11 temp sensor |
+| **ESP32 devkit** (CH9102 USB) | `SmartFridge_ESP32_CH` | ILI9488 TFT + XPT2046 touch, merges all roof docs into one inventory and renders it, **hall door sensor**, broadcasts `SCAN_TRIGGER` over ESP-NOW |
 
 > The TFT display used to live on the CAM board (old `SmartFridge_ESP32_Combined`,
 > now removed). It now runs on the separate CH devkit, which **freed GPIO 12/13/14
@@ -20,15 +22,41 @@ no wires between the boards at all.
 > (CAM GPIO 13 as RX); that's been replaced by ESP-NOW, so GPIO 13 on the CAM
 > and GPIO 17 on the CH are free again. See `feature/espnow-ch-cam`.
 
+## Multi-camera ("roof") support
+
+There are `NUM_ROOFS` (CH `parameters.h`, currently 2) ESP32-CAM boards, one
+mounted above each fridge shelf. Every CAM board runs the *exact same*
+`SmartFridge_ESP32_CAM` sketch — only `CAMERA_ROOF` (CAM `parameters.h`)
+differs per physical board before flashing (1, 2, 3...). Only the `CAMERA_ROOF
+== 1` board is wired with the WS2811 LED strip and DHT11 temperature sensor;
+every other roof board leaves those pins unconnected and the corresponding
+init/read code is compiled out (`#if CAMERA_ROOF == 1` in the CAM `.ino`).
+
+Each CAM board writes its own scan results to its own Firestore document —
+`fridges/{FRIDGE_ID}/inventory/roof{CAMERA_ROOF}` — instead of a single shared
+doc, so concurrent scans from different roofs can never race each other or
+clobber one another's writes.
+
+The CH board merges all `NUM_ROOFS` roof docs into the single
+`fridges/{FRIDGE_ID}/inventory/current` doc — summing quantities for
+same-named items across roofs — every inventory poll (see
+`inventory_merge.h` → `mergeRoofInventories()`, called right before
+`fetchInventory()`). That merged doc is the **only** place expiry dates live
+(CAM boards never write expiries); the merge preserves whatever expiries are
+already in `/current` by item name. The display, touch-edit (expiry entry),
+and GM65 barcode-scan code all continue to read/write `/current` exactly as
+before — they're unaware of the per-roof split.
+
 ## ESP-NOW link — CH → CAM (door-close scan trigger)
 
-One-way, wireless link — no wiring between the boards. CH detects door close
-(hall sensor) and unicasts an ESP-NOW `"SCAN_TRIGGER"` packet straight to the
-CAM's MAC address; CAM receives it in a recv callback and calls
-`captureAndProcess()`.
+One-way, wireless link — no wiring between any boards. CH detects door close
+(hall sensor) and **broadcasts** an ESP-NOW `"SCAN_TRIGGER"` packet
+(`FF:FF:FF:FF:FF:FF`); every CAM board (any roof) receives it in its recv
+callback and calls `captureAndProcess()` independently. Broadcast means
+adding/removing CAM boards needs no MAC-address bookkeeping on the CH side.
 
 ```
-CH  (ESP-NOW unicast, "SCAN_TRIGGER") ──────────► CAM (MAC: CAM_MAC_ADDR)
+CH  (ESP-NOW broadcast, "SCAN_TRIGGER") ──────────► every CAM board
 ```
 
 Both boards pin their WiFi radio to a fixed `ESPNOW_CHANNEL` (default 1, set
@@ -41,12 +69,10 @@ keep working. If the router connection does succeed, the ESP32 WiFi stack
 switches to the AP's channel for as long as it's associated, and ESP-NOW
 keeps working either way (`peer.channel = 0`, i.e. "current channel").
 
-Setup: flash `ESP32/SmartFridge_ESP32_GetMac/` onto the CAM board once to
-read its MAC address, then paste it into `CAM_MAC_ADDR` in
-`ESP32/SmartFridge_ESP32_CH/parameters.h`.
-
 Implementation: `espnow_link.h` on both boards (`espnowSendScanTrigger()` on
-CH, `espnowScanTriggerReceived()` on CAM).
+CH, `espnowScanTriggerReceived()` on CAM). `ESP32/SmartFridge_ESP32_GetMac/`
+(reading a board's own MAC) is no longer needed for this link now that it's a
+broadcast, but is kept around as a general-purpose utility sketch.
 
 ## What's already working (DO NOT break)
 
@@ -151,19 +177,21 @@ main
 ## Project architecture
 
 ```
-ESP32-CAM board  (SmartFridge_ESP32_CAM)
-    ├── Camera → Gemini AI → Firestore (cloud)
-    ├── LED strip (illumination during scan)
-    ├── ESP-NOW recv ← receives SCAN_TRIGGER from CH, auto-triggers a scan
+ESP32-CAM board × NUM_ROOFS  (SmartFridge_ESP32_CAM, CAMERA_ROOF = 1..N)
+    ├── Camera → Gemini AI → Firestore inventory/roof{CAMERA_ROOF} (cloud)
+    ├── LED strip + DHT11 (CAMERA_ROOF == 1 board only — no connections on others)
+    ├── ESP-NOW recv ← receives broadcast SCAN_TRIGGER from CH, auto-triggers a scan
     └── [TODO] more sensors below
 
 ESP32 devkit board  (SmartFridge_ESP32_CH)
-    ├── TFT display + touch ← polls Firestore inventory/current
-    ├── Hall door sensor (GPIO 25) → door close → sends SCAN_TRIGGER over ESP-NOW
-    └── ESP-NOW unicast → CAM_MAC_ADDR
+    ├── TFT display + touch ← polls Firestore inventory/current (merged)
+    ├── inventory_merge.h → merges inventory/roof1..roofN into inventory/current
+    ├── Hall door sensor (GPIO 25) → door close → broadcasts SCAN_TRIGGER over ESP-NOW
+    └── ESP-NOW broadcast → all CAM boards
 
 Firestore (Firebase)
-    ├── fridges/fridge1/inventory/current   ← live inventory
+    ├── fridges/fridge1/inventory/roof1..N  ← per-camera raw scan results
+    ├── fridges/fridge1/inventory/current   ← merged live inventory (display/edit/barcode target)
     ├── fridges/fridge1/scans/<timestamp>   ← scan history
     ├── basic-items/basic-items             ← canonical item names
     └── [TODO] fridges/fridge1/sensors/     ← temperature, door, weight

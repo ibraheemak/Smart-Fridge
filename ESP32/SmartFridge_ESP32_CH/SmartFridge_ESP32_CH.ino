@@ -22,6 +22,7 @@
 
 #include "SECRETS.h"
 #include "parameters.h"
+#include "inventory_merge.h"
 #include "display.h"
 #include "touch.h"
 #include "stats.h"
@@ -294,6 +295,7 @@ void setup() {
   initGM65();
 
   showStatus("Loading inventory", "");
+  mergeRoofInventories();
   if (fetchInventory()) {
     g_last_signature = buildSignature();
     // Don't overwrite the new-item prompt that fetchInventory() may have just drawn.
@@ -328,6 +330,7 @@ void loop() {
     // overwrite the screen or disrupt an in-progress edit. Polling on VIEW_STATS is
     // fine since that screen doesn't depend on g_items.
     if (g_view == VIEW_LIST || g_view == VIEW_STATS) {
+      mergeRoofInventories();
       if (fetchInventory()) {
         String sig = buildSignature();
         if (sig != g_last_signature) {

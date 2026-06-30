@@ -122,12 +122,16 @@ void configureTime() {
 // ============================================================================
 void captureAndProcess() {
   Serial.println("[SCAN] Starting...");
+#if CAMERA_ROOF == 1
   ledStripOn();
   delay(20);
+#endif
 
   size_t photo_size = 0;
   uint8_t* photo_data = capturePhoto(&photo_size);
+#if CAMERA_ROOF == 1
   ledStripOff();
+#endif
 
   if (!photo_data) {
     Serial.println("[SCAN] Capture failed");
@@ -172,6 +176,7 @@ void captureAndProcess() {
 // ============================================================================
 // TEMPERATURE / HUMIDITY
 // ============================================================================
+#if CAMERA_ROOF == 1
 void readAndPublishTemperature() {
   float tempC, humidity;
   if (!readTemperature(tempC, humidity)) {
@@ -181,6 +186,7 @@ void readAndPublishTemperature() {
   Serial.printf("[TEMP] %.1f C, %.1f %% RH\n", tempC, humidity);
   saveTemperature(tempC, humidity);
 }
+#endif
 
 // ============================================================================
 // SERIAL COMMANDS
@@ -189,9 +195,11 @@ void printHelp() {
   Serial.println("\n========================================");
   Serial.println("SmartFridge CAM — Commands");
   Serial.println("SCAN      — Capture, analyze, save to Firestore");
+#if CAMERA_ROOF == 1
   Serial.println("LED ON    — LED strip on (test)");
   Serial.println("LED OFF   — LED strip off (test)");
   Serial.println("TEMP      — Read DHT11 + publish to Firestore");
+#endif
   Serial.println("STATUS    — System status");
   Serial.println("WIFIRESET — Wipe WiFi credentials");
   Serial.println("HELP      — This menu");
@@ -201,9 +209,11 @@ void printHelp() {
 void processSerialCommand(String cmd) {
   cmd.trim(); cmd.toUpperCase();
   if      (cmd == "SCAN")      captureAndProcess();
+#if CAMERA_ROOF == 1
   else if (cmd == "LED ON")    ledStripOn();
   else if (cmd == "LED OFF")   ledStripOff();
   else if (cmd == "TEMP")      readAndPublishTemperature();
+#endif
   else if (cmd == "STATUS")
     Serial.printf("[STATUS] WiFi: %s  IP: %s  Heap: %u\n",
                   WiFi.status() == WL_CONNECTED ? "OK" : "DISCONNECTED",
@@ -229,9 +239,13 @@ void setup() {
   initOfflineBuffer();
   initFlash();
   initCamera();
+#if CAMERA_ROOF == 1
   initLEDStrip();
+#endif
   initEspNowLink();
+#if CAMERA_ROOF == 1
   initTempSensor();
+#endif
 
   webServer.on("/latest.jpg", HTTP_GET, handleLatestJpeg);
   webServer.begin();
@@ -266,10 +280,12 @@ void loop() {
 
   webServer.handleClient();
 
+#if CAMERA_ROOF == 1
   if (millis() - lastTempReadMs >= TEMP_READ_INTERVAL_MS) {
     lastTempReadMs = millis();
     readAndPublishTemperature();
   }
+#endif
 
   if (espnowScanTriggerReceived()) {
     Serial.println("[ESPNOW] SCAN_TRIGGER received — auto scan");

@@ -74,7 +74,7 @@ String fetchBasicItems() {
 String fetchExistingExpiries(const String& item_name) {
   String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
                "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
-               "/inventory/current?key=" + String(FIREBASE_API_KEY);
+               "/inventory/" + INVENTORY_DOC_ID + "?key=" + String(FIREBASE_API_KEY);
   HTTPClient http;
   http.begin(url);
   int code = http.GET();
@@ -154,6 +154,8 @@ String quoteFieldPath(const String& name) {
 // user just bought: either a name that wasn't in the previous scan at all,
 // or an existing item whose quantity went up (more units bought).
 // ============================================================================
+// Increments fridges/{fridge}/bought/{month} counters — shared across all
+// roofs since this is a fridge-wide purchase analytic, not roof-specific.
 void saveBoughtItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc) {
   if (WiFi.status() != WL_CONNECTED) return;
 
@@ -238,11 +240,14 @@ void saveBoughtItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc) 
 bool saveToFirebase(JsonDocument& items_doc) {
   if (!items_doc.containsKey("items") || WiFi.status() != WL_CONNECTED) return false;
 
-  // First, read the whole current document once so we can preserve expiries
-  // and detect newly bought items.
+  // First, read this roof's existing document once to detect newly bought
+  // items. Expiry dates are NOT tracked here — they live only on the CH
+  // board's merged fridges/{fridge}/inventory/current doc (see
+  // inventory_merge.h on the CH board), since that's the single source of
+  // truth users edit via touch.
   String cur_url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
                    "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
-                   "/inventory/current?key=" + String(FIREBASE_API_KEY);
+                   "/inventory/" + INVENTORY_DOC_ID + "?key=" + String(FIREBASE_API_KEY);
   DynamicJsonDocument cur_doc(8192);
   bool has_existing = false;
   {
@@ -269,33 +274,14 @@ bool saveToFirebase(JsonDocument& items_doc) {
   StaticJsonDocument<4096> doc;
   JsonObject fields = doc.createNestedObject("fields");
   fields["updatedAt"]["stringValue"] = getFormattedTimestamp();
-  fields["source"]["stringValue"]    = "ESP32-CAM";
+  fields["source"]["stringValue"]    = "ESP32-CAM-" INVENTORY_DOC_ID;
 
   JsonArray values = fields["items"]["arrayValue"].createNestedArray("values");
   for (JsonObject item : items_doc["items"].as<JsonArray>()) {
-    String item_name = item["name"].as<String>();
     JsonObject mf = values.createNestedObject()["mapValue"].createNestedObject("fields");
-    mf["name"]["stringValue"]       = item_name;
+    mf["name"]["stringValue"]       = item["name"].as<String>();
     mf["quantity"]["stringValue"]   = item["quantity"].as<String>();
     mf["confidence"]["stringValue"] = item["confidence"].as<String>();
-
-    // Preserve any expiry dates the user already entered for this item.
-    if (has_existing) {
-      JsonArray existing_items = cur_doc["fields"]["items"]["arrayValue"]["values"];
-      for (JsonObject ev : existing_items) {
-        JsonObject emf = ev["mapValue"]["fields"];
-        if (!String(emf["name"]["stringValue"].as<String>()).equalsIgnoreCase(item_name)) continue;
-
-        // Copy expiries array.
-        JsonArray ea = emf["expiries"]["arrayValue"]["values"];
-        if (ea.size() > 0) {
-          JsonArray out_ea = mf["expiries"]["arrayValue"].createNestedArray("values");
-          for (JsonObject ed : ea)
-            out_ea.createNestedObject()["stringValue"] = ed["stringValue"].as<String>();
-        }
-        break;
-      }
-    }
   }
 
   String payload;
@@ -305,9 +291,9 @@ bool saveToFirebase(JsonDocument& items_doc) {
   http.addHeader("Content-Type", "application/json");
   int code = http.PATCH(payload);
   http.end();
-  Serial.printf("[FIREBASE] save %s (%d items)\n",
+  Serial.printf("[FIREBASE] save %s (%d items) -> inventory/%s\n",
                 (code==200||code==201) ? "OK" : "FAILED",
-                (int)items_doc["items"].as<JsonArray>().size());
+                (int)items_doc["items"].as<JsonArray>().size(), INVENTORY_DOC_ID);
   return (code == 200 || code == 201);
 }
 
@@ -348,7 +334,7 @@ bool saveScanHistory(JsonDocument& items_doc) {
   fields["timestamp"]["stringValue"] = getFormattedTimestamp();
   fields["weekId"]["stringValue"]    = getWeekId();
   fields["monthId"]["stringValue"]   = getMonthId();
-  fields["source"]["stringValue"]    = "ESP32-CAM";
+  fields["source"]["stringValue"]    = "ESP32-CAM-" INVENTORY_DOC_ID;
 
   JsonArray values = fields["items"]["arrayValue"].createNestedArray("values");
   for (JsonObject item : items_doc["items"].as<JsonArray>()) {

@@ -39,6 +39,17 @@
 #define FRIDGE_ID  "fridge1"
 
 // ----------------------------------------------------------------------------
+// MULTI-CAMERA ("ROOF") SUPPORT
+// ----------------------------------------------------------------------------
+// Number of ESP32-CAM boards, one per fridge shelf ("roof") — each runs
+// SmartFridge_ESP32_CAM with its own CAMERA_ROOF (1..NUM_ROOFS) and writes
+// its scan results to fridges/{FRIDGE_ID}/inventory/roof{N}. This board
+// merges all of them into fridges/{FRIDGE_ID}/inventory/current (see
+// inventory_merge.h), which is what the display/touch-edit/GM65 code below
+// actually reads and writes.
+#define NUM_ROOFS  2
+
+// ----------------------------------------------------------------------------
 // DISPLAY
 // ----------------------------------------------------------------------------
 #define DISPLAY_ROTATION  1        // 1/3 = landscape (480x320)
@@ -74,13 +85,12 @@
 #define BUZZER_BEEP_OFF_MS    200     // each beep OFF time (ms)
 
 // ----------------------------------------------------------------------------
-// ESP-NOW LINK TO CAM BOARD — sends SCAN_TRIGGER on door close
+// ESP-NOW LINK TO CAM BOARDS — sends SCAN_TRIGGER on door close
 // ----------------------------------------------------------------------------
-// Unicast to the CAM's MAC address (no wiring — see espnow_link.h). Flash
-// ESP32/SmartFridge_ESP32_GetMac/ onto the CAM board to read its MAC, then
-// fill it in below. Must match ESPNOW_CHANNEL on the CAM board.
+// Broadcast (no wiring — see espnow_link.h) so every CAM board (any roof)
+// receives it with no per-board MAC bookkeeping on this side. Must match
+// ESPNOW_CHANNEL on every CAM board.
 #define ESPNOW_CHANNEL          1
-static uint8_t CAM_MAC_ADDR[6] = {0x7C, 0x9E, 0xBD, 0x06, 0x2B, 0x7C};
 
 // ----------------------------------------------------------------------------
 // GM65 BARCODE SCANNER (US #15 — manual product scanner)

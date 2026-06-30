@@ -23,6 +23,27 @@
 #define FRIDGE_ID  "fridge1"
 
 // ----------------------------------------------------------------------------
+// CAMERA / ROOF IDENTITY (multi-camera support, N cameras now N=2)
+// ----------------------------------------------------------------------------
+// Each ESP32-CAM board sits above its own fridge shelf ("roof") and runs this
+// exact same sketch — only this constant changes per physical board before
+// flashing. Only roof 1's board is wired with the WS2811 LED strip and DHT11
+// temperature sensor (see LED/TEMP sections below); every other roof board
+// leaves those pins unconnected and the corresponding init/read code compiled
+// out (#if CAMERA_ROOF == 1 in the .ino).
+//
+// Each board writes its own scan results to its own Firestore document —
+// fridges/{FRIDGE_ID}/inventory/roof{CAMERA_ROOF} — instead of a single
+// shared "current" doc, so two boards scanning concurrently can never race
+// each other. The CH display board merges all roof docs into the combined
+// inventory/current doc that it (and the app) actually displays/edits — see
+// inventory_merge.h on the CH board.
+#define CAMERA_ROOF  2   // 1, 2, 3... — set per physical board
+#define STRINGIFY2(x) #x
+#define STRINGIFY(x)  STRINGIFY2(x)
+#define INVENTORY_DOC_ID  "roof" STRINGIFY(CAMERA_ROOF)
+
+// ----------------------------------------------------------------------------
 // CAMERA PINS (AI Thinker ESP32-CAM)
 // ----------------------------------------------------------------------------
 #define PWDN_GPIO_NUM     32
@@ -45,8 +66,8 @@
 // ----------------------------------------------------------------------------
 // FLASH & LED STRIP
 // ----------------------------------------------------------------------------
-#define FLASH_GPIO_NUM     4         // Camera flash (PWM via LEDC)
-#define LED_DATA_PIN       2         // WS2811 LED strip
+#define FLASH_GPIO_NUM     4         // Camera flash, onboard every CAM board (PWM via LEDC)
+#define LED_DATA_PIN       2         // WS2811 LED strip — wired on CAMERA_ROOF == 1 only
 #define LED_NUM_LEDS       4
 #define LED_BRIGHTNESS     200
 
@@ -59,7 +80,7 @@
 #define ESPNOW_CHANNEL          1
 
 // ----------------------------------------------------------------------------
-// DHT11 TEMPERATURE / HUMIDITY SENSOR (US #8, #9)
+// DHT11 TEMPERATURE / HUMIDITY SENSOR (US #8, #9) — wired on CAMERA_ROOF == 1 only
 // ----------------------------------------------------------------------------
 // 3-pin module (onboard pull-up). "S" -> GPIO14, "+" -> 3.3V, "-" -> GND.
 #define DHT_PIN                14     // free pin, no strapping issues
