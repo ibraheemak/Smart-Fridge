@@ -49,10 +49,10 @@
 // WIFI / PORTAL
 // ----------------------------------------------------------------------------
 #define WIFI_AP_NAME          "SmartFridge_Display_Setup"
-#define WIFI_PORTAL_TIMEOUT_S  180
+#define WIFI_PORTAL_TIMEOUT_S      180
+#define WIFI_RECONNECT_INTERVAL_MS 30000  // retry WiFi.begin() this often while offline
 #define RESET_BUTTON_PIN        0  // BOOT button — hold at power-on to wipe creds
 #define RESET_HOLD_MS        3000
-#define WIFI_RECONNECT_INTERVAL_MS 30000  // retry WiFi.begin() this often while offline
 
 // ----------------------------------------------------------------------------
 // HALL EFFECT DOOR SENSOR (US #10) — moved here from the CAM board

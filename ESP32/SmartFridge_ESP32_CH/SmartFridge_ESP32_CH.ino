@@ -36,6 +36,7 @@
 String        g_last_signature = "";
 unsigned long g_last_poll_ms   = 0;
 unsigned long g_last_wifi_retry_ms = 0;
+bool          g_was_offline    = false;
 String        g_wifi_ssid;
 String        g_wifi_pass;
 
@@ -305,6 +306,7 @@ void setup() {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
+    g_was_offline = true;
     if (millis() - g_last_wifi_retry_ms >= WIFI_RECONNECT_INTERVAL_MS) {
       g_last_wifi_retry_ms = millis();
       if (g_wifi_ssid.length() > 0) {
@@ -314,6 +316,10 @@ void loop() {
         Serial.println("[WIFI] No saved credentials to retry");
       }
     }
+  } else if (g_was_offline) {
+    g_was_offline = false;
+    Serial.println("[WIFI] Restored — syncing offline barcodes");
+    replayOfflineBarcodes();
   }
 
   if (millis() - g_last_poll_ms >= INVENTORY_POLL_INTERVAL_MS) {
