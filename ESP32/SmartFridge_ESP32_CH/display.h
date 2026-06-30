@@ -349,6 +349,143 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
 }
 
 // ============================================================================
+// Home screen
+// ============================================================================
+
+// Live sensor values — updated by DHT11 when available; -1 means "no data yet".
+float g_temp_c    = -1.0f;
+float g_humidity  = -1.0f;
+
+// Tile IDs — used by handleTouch() to know which tile was tapped.
+#define HOME_TILE_INVENTORY  0
+#define HOME_TILE_SCAN       1
+#define HOME_TILE_STATS      2
+
+struct HomeTile { int x, y, w, h; };
+HomeTile g_home_tiles[3];
+
+// Draw one home-screen tile.  bg is the fill colour; icon is a short emoji/
+// ASCII string shown large above the label.
+void drawHomeTile(HomeTile t, const char* icon, const char* label,
+                  const char* sub, uint16_t bg, uint16_t fg) {
+  tft.fillRoundRect(t.x + 4, t.y + 4, t.w - 8, t.h - 8, 12, bg);
+  tft.drawRoundRect(t.x + 4, t.y + 4, t.w - 8, t.h - 8, 12, fg);
+
+  int cx = t.x + t.w / 2;
+  int cy = t.y + t.h / 2;
+
+  // Icon (large)
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(fg, bg);
+  tft.setTextSize(3);
+  tft.drawString(icon, cx, cy - 22);
+
+  // Label
+  tft.setTextSize(2);
+  tft.drawString(label, cx, cy + 12);
+
+  // Sub-label (small)
+  if (sub && sub[0]) {
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_LIGHTGREY, bg);
+    tft.drawString(sub, cx, cy + 32);
+  }
+}
+
+void renderHomeScreen() {
+  int W = tft.width();   // 480
+  int H = tft.height();  // 320
+
+  tft.fillScreen(TFT_BLACK);
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  const int HDR = 50;
+  tft.fillRect(0, 0, W, HDR, TFT_NAVY);
+
+  // Title
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.setTextSize(2);
+  tft.drawString("Smart Fridge", SIDE_PADDING_PX, HDR / 2);
+
+  // Temperature
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextSize(1);
+  if (g_temp_c >= 0) {
+    char tbuf[12];
+    snprintf(tbuf, sizeof(tbuf), "%.1f C", g_temp_c);
+    tft.setTextColor(TFT_CYAN, TFT_NAVY);
+    tft.drawString(tbuf, W - 80, HDR / 2);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
+    tft.drawString("--.- C", W - 80, HDR / 2);
+  }
+
+  // Humidity
+  if (g_humidity >= 0) {
+    char hbuf[12];
+    snprintf(hbuf, sizeof(hbuf), "%.0f%%", g_humidity);
+    tft.setTextColor(TFT_SKYBLUE, TFT_NAVY);
+    tft.drawString(hbuf, W - SIDE_PADDING_PX, HDR / 2);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
+    tft.drawString("--%", W - SIDE_PADDING_PX, HDR / 2);
+  }
+
+  // ── Footer ────────────────────────────────────────────────────────────────
+  const int FTR = 36;
+  int fy = H - FTR;
+  tft.fillRect(0, fy, W, FTR, 0x1082);  // very dark grey
+
+  time_t now = time(nullptr);
+  struct tm* tm_info = localtime(&now);
+
+  char date_buf[32], time_buf[12];
+  strftime(date_buf, sizeof(date_buf), "%A, %d %b %Y", tm_info);
+  strftime(time_buf, sizeof(time_buf),  "%H:%M:%S",      tm_info);
+
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, 0x1082);
+  tft.setTextSize(1);
+  tft.drawString(date_buf, SIDE_PADDING_PX, fy + FTR / 2);
+
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(TFT_WHITE, 0x1082);
+  tft.drawString(time_buf, W - SIDE_PADDING_PX, fy + FTR / 2);
+
+  // ── Tiles ─────────────────────────────────────────────────────────────────
+  // Two columns, two rows — bottom-right tile is empty for now.
+  int tile_area_h = fy - HDR;
+  int col0 = 0,       col1 = W / 2;
+  int colW = W / 2;
+  int row0 = HDR,     row1 = HDR + tile_area_h / 2;
+  int rowH = tile_area_h / 2;
+
+  g_home_tiles[HOME_TILE_INVENTORY] = {col0, row0, colW, rowH};
+  g_home_tiles[HOME_TILE_SCAN]      = {col1, row0, colW, rowH};
+  g_home_tiles[HOME_TILE_STATS]     = {col0, row1, colW, rowH};
+
+  // Tile backgrounds
+  char inv_sub[20];
+  snprintf(inv_sub, sizeof(inv_sub), "%d items", g_item_count);
+
+  drawHomeTile(g_home_tiles[HOME_TILE_INVENTORY],
+               "[]", "INVENTORY", inv_sub, 0x0949, TFT_CYAN);
+  drawHomeTile(g_home_tiles[HOME_TILE_SCAN],
+               "|>", "SCAN", "Barcode scanner", 0x0820, TFT_GREENYELLOW);
+  drawHomeTile(g_home_tiles[HOME_TILE_STATS],
+               "##", "THIS MONTH", "Statistics", 0x4800, TFT_ORANGE);
+
+  // Empty bottom-right — subtle placeholder
+  tft.fillRoundRect(col1 + 4, row1 + 4, colW - 8, rowH - 8, 12, 0x0841);
+  tft.drawRoundRect(col1 + 4, row1 + 4, colW - 8, rowH - 8, 12, 0x2104);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(0x2104, 0x0841);
+  tft.setTextSize(1);
+  tft.drawString("Coming soon", col1 + colW / 2, row1 + rowH / 2);
+}
+
+// ============================================================================
 // Inventory rendering
 // ============================================================================
 
@@ -477,20 +614,16 @@ void renderInventory() {
     if (l.show_down) drawScrollArrow(l.down_y, false);
   }
 
-  // Footer doubles as a "Scan" button (center) and a "This Month" stats
-  // button (right) — see handleTouch()'s VIEW_LIST footer hit-zones.
+  // Footer: "< Home" on the left, last-updated timestamp on the right.
   int w2 = tft.width();
   int fy = tft.height() - FOOTER_HEIGHT_PX;
   tft.fillRect(0, fy, w2, FOOTER_HEIGHT_PX, TFT_DARKGREY);
   tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
-  tft.setTextSize(1);
-  String upd = g_updated_at.length() > 0 ? "Updated " + g_updated_at : "Waiting for scan...";
-  tft.drawString(upd, SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_GREENYELLOW, TFT_DARKGREY);
-  tft.drawString("[ Scan ]", w2 / 2, fy + FOOTER_HEIGHT_PX / 2);
-  tft.setTextDatum(MR_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_DARKGREY);
-  tft.drawString("This Month >", w2 - SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
+  tft.setTextSize(1);
+  tft.drawString("< Home", SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_DARKGREY);
+  String upd = g_updated_at.length() > 0 ? "Updated " + g_updated_at : "Waiting for scan...";
+  tft.drawString(upd, w2 - SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
 }
