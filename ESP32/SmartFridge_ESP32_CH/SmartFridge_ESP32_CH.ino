@@ -37,6 +37,7 @@ String        g_last_signature = "";
 unsigned long g_last_poll_ms   = 0;
 unsigned long g_last_wifi_retry_ms = 0;
 unsigned long g_last_clock_ms  = 0;   // last home-screen footer clock redraw
+unsigned long g_last_temp_ms   = 0;   // last temperature/humidity fetch
 bool          g_was_offline    = false;
 String        g_wifi_ssid;
 String        g_wifi_pass;
@@ -299,6 +300,10 @@ void setup() {
   g_last_signature = buildSignature();
   g_last_poll_ms = millis();
 
+  // Fetch temperature & humidity once on boot so the home screen shows values immediately.
+  fetchTemperature();
+  g_last_temp_ms = millis();
+
   // Always start on the home screen after boot.
   if (g_view == VIEW_HOME) renderHomeScreen();
 }
@@ -319,6 +324,12 @@ void loop() {
     g_was_offline = false;
     Serial.println("[WIFI] Restored — syncing offline barcodes");
     replayOfflineBarcodes();
+  }
+
+  // Fetch temperature & humidity every 60 seconds and refresh the home header.
+  if (millis() - g_last_temp_ms >= 60000UL) {
+    g_last_temp_ms = millis();
+    if (fetchTemperature() && g_view == VIEW_HOME) renderHomeScreen();
   }
 
   if (millis() - g_last_poll_ms >= INVENTORY_POLL_INTERVAL_MS) {

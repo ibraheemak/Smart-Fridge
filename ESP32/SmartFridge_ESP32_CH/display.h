@@ -352,9 +352,47 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
 // Home screen
 // ============================================================================
 
-// Live sensor values — updated by DHT11 when available; -1 means "no data yet".
+// Live sensor values — fetched from Firestore sensors/temperature; -1 = no data yet.
 float g_temp_c    = -1.0f;
 float g_humidity  = -1.0f;
+
+// Fetch latest temperature & humidity from Firestore.
+// Path: fridges/{FRIDGE_ID}/sensors/temperature
+// Fields: temperature (doubleValue), humidity (doubleValue)
+bool fetchTemperature() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  String url =
+    "https://firestore.googleapis.com/v1/projects/" +
+    String(FIREBASE_PROJECT_ID) +
+    "/databases/(default)/documents/fridges/" +
+    String(FRIDGE_ID) +
+    "/sensors/temperature?key=" +
+    String(FIREBASE_API_KEY);
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(8000);
+  if (!http.begin(client, url)) return false;
+
+  int code = http.GET();
+  if (code != 200) { http.end(); return false; }
+
+  String body = http.getString();
+  http.end();
+
+  DynamicJsonDocument doc(512);
+  if (deserializeJson(doc, body)) return false;
+
+  JsonObject fields = doc["fields"];
+  if (fields.isNull()) return false;
+
+  g_temp_c   = fields["temperature"]["doubleValue"].as<float>();
+  g_humidity = fields["humidity"]["doubleValue"].as<float>();
+  Serial.printf("[TEMP] %.1f C  %.0f%%\n", g_temp_c, g_humidity);
+  return true;
+}
 
 // Tile IDs — used by handleTouch() to know which tile was tapped.
 #define HOME_TILE_INVENTORY  0
