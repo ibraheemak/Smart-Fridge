@@ -35,9 +35,9 @@ void triggerGM65Scan();
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS };
+enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS };
 
-ViewState     g_view          = VIEW_LIST;
+ViewState     g_view          = VIEW_HOME;
 int           g_detail_index  = -1;
 unsigned long g_last_touch_ms = 0;
 
@@ -501,26 +501,37 @@ void handleTouch() {
 
   Serial.printf("[TOUCH] x=%d y=%d (corrected) view=%d\n", tx, ty, g_view);
 
+  // VIEW_HOME — large tile buttons
+  if (g_view == VIEW_HOME) {
+    auto inTile = [](HomeTile t, int x, int y) {
+      return x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h;
+    };
+    if (inTile(g_home_tiles[HOME_TILE_INVENTORY], tx, ty)) {
+      g_view = VIEW_LIST;
+      renderInventory();
+    } else if (inTile(g_home_tiles[HOME_TILE_SCAN], tx, ty)) {
+      triggerGM65Scan();
+    } else if (inTile(g_home_tiles[HOME_TILE_STATS], tx, ty)) {
+      g_view = VIEW_STATS;
+      showStatus("Loading stats...", "");
+      fetchBoughtStats();
+      renderStatsScreen();
+    }
+    return;
+  }
+
   // VIEW_STATS — same header "< Back" button as the item-detail page.
   if (g_view == VIEW_STATS) {
-    if (inBtn(btnBackHit, tx, ty)) { g_view = VIEW_LIST; renderInventory(); }
+    if (inBtn(btnBackHit, tx, ty)) { g_view = VIEW_HOME; renderHomeScreen(); }
     return;
   }
 
   if (g_view == VIEW_LIST) {
-    // Footer has two tap zones: center "[ Scan ]" triggers a GM65 barcode
-    // scan, right "This Month >" opens stats. See renderInventory().
+    // Footer: "< Home" on the left returns to the home screen.
     int footer_y = tft.height() - FOOTER_HEIGHT_PX;
     if ((int)ty >= footer_y) {
-      int w = tft.width();
-      if (tx >= w * 0.35 && tx <= w * 0.65) {
-        triggerGM65Scan();
-      } else if (tx > w * 0.65) {
-        g_view = VIEW_STATS;
-        showStatus("Loading stats...", "");
-        fetchBoughtStats();
-        renderStatsScreen();
-      }
+      g_view = VIEW_HOME;
+      renderHomeScreen();
       return;
     }
 

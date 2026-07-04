@@ -37,6 +37,8 @@
 String        g_last_signature = "";
 unsigned long g_last_poll_ms   = 0;
 unsigned long g_last_wifi_retry_ms = 0;
+unsigned long g_last_clock_ms  = 0;   // last home-screen footer clock redraw
+unsigned long g_last_temp_ms   = 0;   // last temperature/humidity fetch
 bool          g_was_offline    = false;
 String        g_wifi_ssid;
 String        g_wifi_pass;
@@ -304,6 +306,13 @@ void setup() {
     showStatus("No data yet", "Waiting for fridge scan");
   }
   g_last_poll_ms = millis();
+
+  // Fetch temperature & humidity once on boot so the home screen shows values immediately.
+  fetchTemperature();
+  g_last_temp_ms = millis();
+
+  // Always start on the home screen after boot.
+  if (g_view == VIEW_HOME) renderHomeScreen();
 }
 
 void loop() {
@@ -324,12 +333,18 @@ void loop() {
     replayOfflineBarcodes();
   }
 
+  // Fetch temperature & humidity every 60 seconds and refresh the home header.
+  if (millis() - g_last_temp_ms >= 60000UL) {
+    g_last_temp_ms = millis();
+    if (fetchTemperature() && g_view == VIEW_HOME) renderHomeScreen();
+  }
+
   if (millis() - g_last_poll_ms >= INVENTORY_POLL_INTERVAL_MS) {
     g_last_poll_ms = millis();
     // Don't poll while the user is on the new-item/expiry-entry screen — it would
     // overwrite the screen or disrupt an in-progress edit. Polling on VIEW_STATS is
     // fine since that screen doesn't depend on g_items.
-    if (g_view == VIEW_LIST || g_view == VIEW_STATS) {
+    if (g_view == VIEW_HOME || g_view == VIEW_LIST || g_view == VIEW_STATS) {
       mergeRoofInventories();
       if (fetchInventory()) {
         String sig = buildSignature();
@@ -339,10 +354,34 @@ void loop() {
           // the notification screen (via processNextPending()) — don't paint over
           // it. g_pending_count alone isn't a reliable signal here: it's already
           // been decremented for the one notification currently on screen.
-          if (g_view == VIEW_LIST) renderInventory();
+          if (g_view == VIEW_HOME)  renderHomeScreen();
+          if (g_view == VIEW_LIST)  renderInventory();
         }
       }
     }
+  }
+
+  // Redraw the home-screen clock every second without a full re-render.
+  if (g_view == VIEW_HOME && millis() - g_last_clock_ms >= 1000) {
+    g_last_clock_ms = millis();
+    int W = tft.width(), H = tft.height();
+    const int FTR = 36;
+    int fy = H - FTR;
+
+    time_t now_t = time(nullptr);
+    struct tm* tm_info = localtime(&now_t);
+    char date_buf[32], time_buf[12];
+    strftime(date_buf, sizeof(date_buf), "%A, %d %b %Y", tm_info);
+    strftime(time_buf, sizeof(time_buf),  "%H:%M:%S",      tm_info);
+
+    tft.fillRect(0, fy, W, FTR, 0x1082);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(TFT_LIGHTGREY, 0x1082);
+    tft.setTextSize(1);
+    tft.drawString(date_buf, SIDE_PADDING_PX, fy + FTR / 2);
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(TFT_WHITE, 0x1082);
+    tft.drawString(time_buf, W - SIDE_PADDING_PX, fy + FTR / 2);
   }
 
   handleTouch();
