@@ -21,11 +21,16 @@
 // for as long as it's associated (required to talk to it at all), and
 // ESP-NOW keeps working via peer.channel = 0 ("current channel") either way.
 //
-// Broadcast to FF:FF:FF:FF:FF:FF so every CAM board (any roof, any count)
-// receives the trigger with zero per-board MAC configuration on this side.
+// SCAN_TRIGGER is sent as a unicast to each known CAM board's MAC (see
+// CAM_MAC_ADDRS in parameters.h), one send per roof — NOT a broadcast. A
+// broadcast to FF:FF:FF:FF:FF:FF would need zero per-board MAC bookkeeping,
+// but 802.11 broadcast frames get no MAC-layer ACK/retry: if a CAM board's
+// radio was even briefly busy when the broadcast went out, it just silently
+// missed the trigger with nothing to fall back on (observed: only one of
+// two CAM boards would sometimes take a photo). Unicast frames get hardware
+// ACK + automatic retry, so this is meaningfully more reliable at the cost
+// of listing each board's MAC once below.
 // ============================================================================
-
-static uint8_t ESPNOW_BROADCAST_ADDR[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 void initEspNowLink() {
   esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
@@ -35,19 +40,34 @@ void initEspNowLink() {
     return;
   }
 
-  esp_now_peer_info_t peer = {};
-  memcpy(peer.peer_addr, ESPNOW_BROADCAST_ADDR, 6);
-  peer.channel = 0;   // track whatever channel the radio is currently on
-  peer.encrypt = false;
-  if (!esp_now_is_peer_exist(ESPNOW_BROADCAST_ADDR)) {
-    esp_now_add_peer(&peer);
+  for (int i = 0; i < NUM_ROOFS; i++) {
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, CAM_MAC_ADDRS[i], 6);
+    peer.channel = 0;   // track whatever channel the radio is currently on
+    peer.encrypt = false;
+    if (!esp_now_is_peer_exist(CAM_MAC_ADDRS[i])) {
+      esp_now_add_peer(&peer);
+    }
   }
 
-  Serial.printf("[ESPNOW] link ready -> broadcast (channel %d)\n", ESPNOW_CHANNEL);
+  Serial.printf("[ESPNOW] link ready -> %d known CAM board(s) (channel %d)\n", NUM_ROOFS, ESPNOW_CHANNEL);
+}
+
+// Re-pin the channel after a WiFiManager connect attempt. If it actually
+// connected to the router this is a harmless no-op (the STA can't change
+// channel while associated). If it fell back to hosting its own config
+// portal (WIFI_AP_STA) and timed out still offline, opening that portal's
+// softAP silently retuned the radio away from ESPNOW_CHANNEL — this puts it
+// back so the board still matches the CAM boards while offline.
+void reassertEspNowChannel() {
+  esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  Serial.printf("[ESPNOW] channel re-asserted (now %d)\n", WiFi.channel());
 }
 
 void espnowSendScanTrigger() {
   const char *msg = "SCAN_TRIGGER";
-  esp_err_t result = esp_now_send(ESPNOW_BROADCAST_ADDR, (const uint8_t *)msg, strlen(msg));
-  Serial.printf("[ESPNOW] >> SCAN_TRIGGER broadcast (%s)\n", result == ESP_OK ? "ok" : "failed");
+  for (int i = 0; i < NUM_ROOFS; i++) {
+    esp_err_t result = esp_now_send(CAM_MAC_ADDRS[i], (const uint8_t *)msg, strlen(msg));
+    Serial.printf("[ESPNOW] >> SCAN_TRIGGER -> roof%d (%s)\n", i + 1, result == ESP_OK ? "ok" : "failed");
+  }
 }

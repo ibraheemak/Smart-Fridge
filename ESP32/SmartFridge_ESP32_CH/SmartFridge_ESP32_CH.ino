@@ -262,7 +262,7 @@ void initWiFi() {
 
   WiFi.mode(WIFI_STA);  // drop the AP WiFiManager may have left running
 
-  Serial.printf("[WIFI] Connected: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("[WIFI] Connected: %s channel %d\n", WiFi.localIP().toString().c_str(), WiFi.channel());
 }
 
 void configureTime() {
@@ -289,10 +289,20 @@ void setup() {
   showStatus("Smart Fridge", "Booting...");
   initTouch();
   checkResetButton();
+
+  // Start the WiFi radio and pin the ESP-NOW channel BEFORE connecting to the
+  // router. esp_wifi_set_channel() only takes effect while the STA is
+  // disconnected — call it after WiFiManager has already associated (as the
+  // old order did) and it silently no-ops, leaving each board on whatever
+  // channel the router happened to assign it. Boards on a router that steers
+  // clients to different channels then never see each other's broadcasts.
+  WiFi.mode(WIFI_STA);
+  initEspNowLink();
+
   initWiFi();
+  reassertEspNowChannel();  // undo any channel change from WiFiManager's config portal
   configureTime();
   initDoorSensor();
-  initEspNowLink();
   initBuzzer();
   initGM65();
 
