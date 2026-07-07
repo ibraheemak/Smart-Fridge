@@ -77,6 +77,12 @@ static Gm65State     g_gm65_state       = GM65_IDLE;
 static unsigned long g_gm65_scan_started_ms = 0;
 static size_t        g_gm65_ack_matched = 0;
 
+// Continuous multi-scan session: how many items have been added since the user
+// tapped "Scan". After each successful read the scanner re-arms and the 10s
+// timeout window (GM65_SCAN_TIMEOUT_MS) restarts; the session ends when that
+// window elapses with nothing scanned, or the user taps "< Back".
+static int           g_scan_session_count = 0;
+
 static const uint8_t GM65_ACK[] = {0x02, 0x00, 0x00, 0x01, 0x00, 0x33, 0x31};
 
 // CRC_CCITT (poly 0x1021, init 0) exactly as specified in the GM65 manual
@@ -161,7 +167,50 @@ void triggerGM65Scan() {
   g_gm65_state = GM65_AWAITING_ACK;
   g_gm65_scan_started_ms = millis();
 
-  showStatus("Scanning...", "Point scanner at barcode");
+  // Scanning screen with a header "< Back" button (same as stats / item-detail)
+  // so the user can bail out without waiting for the scan timeout. The touch
+  // handler (VIEW_SCAN) calls cancelGM65Scan() when this button is tapped.
+  // Also re-drawn on each re-arm during a continuous session, so the subtitle
+  // reflects how many items have been scanned so far.
+  tft.fillScreen(TFT_BLACK);
+  int w = tft.width();
+  tft.fillRect(0, 0, w, HEADER_HEIGHT_PX, TFT_NAVY);
+  layoutDetailButtons();
+  drawBtn(btnBack, "< Back", TFT_DARKGREY);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.setTextSize(2);
+  tft.drawString("Scan", w / 2, HEADER_HEIGHT_PX / 2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.drawString("Scanning...", w / 2, tft.height() / 2 - 12);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  if (g_scan_session_count > 0) {
+    tft.drawString("Added " + String(g_scan_session_count) + " - scan next or wait",
+                   w / 2, tft.height() / 2 + 16);
+  } else {
+    tft.drawString("Point scanner at barcode", w / 2, tft.height() / 2 + 16);
+  }
+}
+
+// Starts a fresh multi-scan session from a user action (home "Scan" tile):
+// zeroes the session counter, then arms the first read. Subsequent reads
+// re-arm via triggerGM65Scan() directly so the counter keeps accumulating.
+void beginGM65ScanSession() {
+  g_scan_session_count = 0;
+  triggerGM65Scan();
+}
+
+// Aborts an armed scan (user tapped "< Back"): disarm the module so it stops
+// reading and reset the state machine back to idle. Mirrors the disarm bit
+// used by triggerGM65Scan() (bit0 of zone bit 0x0002).
+void cancelGM65Scan() {
+  gm65WriteZoneBit(0x0002, 0x00);
+  g_gm65_state = GM65_IDLE;
+  g_gm65_buf = "";
+  g_gm65_ack_matched = 0;
+  g_scan_session_count = 0;
 }
 
 // Looks up a barcode via Open Food Facts. Returns the product name, or ""
@@ -460,14 +509,27 @@ void pollGM65() {
   if (g_gm65_state == GM65_IDLE) return;
 
   if (g_gm65_buf.length() == 0) {
-    // Still waiting for the ack or for the first barcode byte — give up
-    // after the timeout so the UI doesn't show "Scanning..." forever.
+    // Waiting for the ack or the first barcode byte. GM65_SCAN_TIMEOUT_MS of
+    // silence ends the window — but its meaning depends on the session so far:
+    //   - nothing scanned yet  -> "Not scanned", back home (single-scan case).
+    //   - one or more scanned  -> the multi-scan session is done (10s quiet
+    //     means there's nothing left to scan), so show the updated inventory.
     if (millis() - g_gm65_scan_started_ms > GM65_SCAN_TIMEOUT_MS) {
       g_gm65_state = GM65_IDLE;
-      showStatus("Not scanned", "Please try again");
-      delay(3000);
-      g_view = VIEW_HOME;
-      renderHomeScreen();
+      if (g_scan_session_count > 0) {
+        int n = g_scan_session_count;
+        g_scan_session_count = 0;
+        showStatus("Scan complete", String(n) + (n == 1 ? " item added" : " items added"));
+        delay(1500);
+        fetchInventory();
+        g_view = VIEW_LIST;
+        renderInventory();
+      } else {
+        showStatus("Not scanned", "Please try again");
+        delay(3000);
+        g_view = VIEW_HOME;
+        renderHomeScreen();
+      }
     }
     return;
   }
@@ -482,26 +544,28 @@ void pollGM65() {
 
   if (WiFi.status() != WL_CONNECTED) {
     saveOfflineBarcode(barcode);
+    g_scan_session_count++;
     showStatus("No Internet", "Item saved, will sync when back online");
-    delay(5000);
-    g_view = VIEW_LIST;
-    renderInventory();
-    return;
-  }
-
-  String name = lookupProductName(barcode);
-  if (name.length() == 0) {
-    showStatus("Unknown item", "Barcode " + barcode + " not found");
-    delay(1500);
+    delay(2500);
   } else {
-    showStatus("Adding item...", name);
-    bool ok = addScannedItemToInventory(name);
-    if (ok) saveBoughtItem(name);
-    showStatus(ok ? "Added!" : "Save failed", name);
-    delay(1500);
+    String name = lookupProductName(barcode);
+    if (name.length() == 0) {
+      showStatus("Unknown item", "Barcode " + barcode + " not found");
+      delay(1500);
+    } else {
+      showStatus("Adding item...", name);
+      bool ok = addScannedItemToInventory(name);
+      if (ok) saveBoughtItem(name);
+      showStatus(ok ? "Added!" : "Save failed", name);
+      if (ok) g_scan_session_count++;
+      delay(1500);
+    }
   }
 
-  if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
+  // Continuous multi-scan: re-arm and keep waiting for the next product. This
+  // resets the 10s window (triggerGM65Scan sets g_gm65_scan_started_ms), so
+  // the session only ends after 10s of silence (handled above) or "< Back".
+  triggerGM65Scan();
 }
 
 // Called from loop() when WiFi is restored — processes every queued barcode

@@ -31,11 +31,15 @@ void renderStatsScreen();
 // Defined in gm65.h, included after this file — forward-declared here since
 // handleTouch() needs to arm a barcode scan on tap of the footer "Scan" button.
 void triggerGM65Scan();
+// Starts a continuous multi-scan session (home "Scan" tile).
+void beginGM65ScanSession();
+// Cancels an in-progress scan (user tapped "< Back" on the scanning screen).
+void cancelGM65Scan();
 
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS };
+enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN };
 
 ViewState     g_view          = VIEW_HOME;
 int           g_detail_index  = -1;
@@ -510,7 +514,8 @@ void handleTouch() {
       g_view = VIEW_LIST;
       renderInventory();
     } else if (inTile(g_home_tiles[HOME_TILE_SCAN], tx, ty)) {
-      triggerGM65Scan();
+      g_view = VIEW_SCAN;
+      beginGM65ScanSession();
     } else if (inTile(g_home_tiles[HOME_TILE_STATS], tx, ty)) {
       g_view = VIEW_STATS;
       showStatus("Loading stats...", "");
@@ -526,10 +531,22 @@ void handleTouch() {
     return;
   }
 
+  // VIEW_SCAN — "< Back" cancels the in-progress scan and returns home.
+  if (g_view == VIEW_SCAN) {
+    if (inBtn(btnBackHit, tx, ty)) {
+      cancelGM65Scan();
+      g_view = VIEW_HOME;
+      renderHomeScreen();
+    }
+    return;
+  }
+
   if (g_view == VIEW_LIST) {
-    // Footer: "< Home" on the left returns to the home screen.
-    int footer_y = tft.height() - FOOTER_HEIGHT_PX;
-    if ((int)ty >= footer_y) {
+    // Header "< Back" button (top-left) returns to the home screen. The zone
+    // is limited to the header height so it can't swallow taps on the up-arrow
+    // scroll strip that sits just below it. Drawn by renderInventory().
+    BtnRect listBackHit = {0, 0, 130, HEADER_HEIGHT_PX};
+    if (inBtn(listBackHit, tx, ty)) {
       g_view = VIEW_HOME;
       renderHomeScreen();
       return;
