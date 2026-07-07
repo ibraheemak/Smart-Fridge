@@ -32,6 +32,17 @@ void initEspNowLink() {
   Serial.printf("[ESPNOW] link ready — listening (channel %d)\n", ESPNOW_CHANNEL);
 }
 
+// Re-pin the channel after a WiFiManager connect attempt. If it actually
+// connected to the router this is a harmless no-op (the STA can't change
+// channel while associated). If it fell back to hosting its own config
+// portal (WIFI_AP_STA) and timed out still offline, opening that portal's
+// softAP silently retuned the radio away from ESPNOW_CHANNEL — this puts it
+// back so the board still matches CH/other CAM boards while offline.
+void reassertEspNowChannel() {
+  esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  Serial.printf("[ESPNOW] channel re-asserted (now %d)\n", WiFi.channel());
+}
+
 // Returns true exactly once when a SCAN_TRIGGER command arrives.
 bool espnowScanTriggerReceived() {
   if (!g_espnow_scan_trigger_pending) return false;

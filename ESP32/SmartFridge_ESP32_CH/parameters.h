@@ -87,10 +87,18 @@
 // ----------------------------------------------------------------------------
 // ESP-NOW LINK TO CAM BOARDS — sends SCAN_TRIGGER on door close
 // ----------------------------------------------------------------------------
-// Broadcast (no wiring — see espnow_link.h) so every CAM board (any roof)
-// receives it with no per-board MAC bookkeeping on this side. Must match
-// ESPNOW_CHANNEL on every CAM board.
+// Sent as a unicast to each CAM board's MAC below (see espnow_link.h for why
+// this isn't a broadcast). Must match ESPNOW_CHANNEL on every CAM board.
 #define ESPNOW_CHANNEL          1
+
+// One entry per roof (must have exactly NUM_ROOFS entries, order doesn't
+// matter). Read each board's MAC by flashing ESP32/SmartFridge_ESP32_GetMac/
+// onto it once (prints WiFi.macAddress() over serial), then reflash it back
+// to SmartFridge_ESP32_CAM afterward.
+static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
+  { 0x7C, 0x9E, 0xBD, 0x06, 0x2B, 0x7C },  // roof1 MAC
+  { 0x3C, 0x61, 0x05, 0x30, 0xBF, 0x00 },  // roof2 MAC
+};
 
 // ----------------------------------------------------------------------------
 // GM65 BARCODE SCANNER (US #15 — manual product scanner)
