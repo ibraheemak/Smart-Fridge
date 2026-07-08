@@ -23,6 +23,7 @@
 #include <ArduinoJson.h>
 #include "parameters.h"
 #include "SECRETS.h"
+#include "rtdb_notify.h"
 
 // Defined in the main .ino — forward-declared here because gm65.h is part of
 // the same contiguous #include block, so Arduino's auto-prototyping (which
@@ -474,7 +475,9 @@ bool addScannedItemToInventory(const String& item_name) {
   Serial.printf("[GM65][INV] save %s for \"%s\" (HTTP %d)%s%s\n",
                 (code == 200 || code == 201) ? "OK" : "FAILED", item_name.c_str(), code,
                 (code != 200 && code != 201) ? " — " : "", resp.c_str());
-  return (code == 200 || code == 201);
+  bool ok = (code == 200 || code == 201);
+  if (ok) rtdbNotifyInventoryChanged();
+  return ok;
 }
 
 // Call from loop(). Only reacts to bytes while a scan is armed (see

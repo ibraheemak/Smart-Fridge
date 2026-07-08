@@ -22,6 +22,7 @@
 #include "time.h"
 
 #include "display.h"
+#include "rtdb_notify.h"
 
 // Defined in stats.h, included after this file — forward-declared here since
 // handleTouch() needs to trigger the stats screen on tap.
@@ -434,6 +435,7 @@ void persistItemsToFirestore() {
     int code = http.PATCH(body);
     Serial.printf("[FIREBASE] PATCH items -> %d\n", code);
     http.end();
+    if (code == 200 || code == 201) rtdbNotifyInventoryChanged();
   }
 }
 

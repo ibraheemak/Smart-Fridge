@@ -38,7 +38,7 @@
 // each other. The CH display board merges all roof docs into the combined
 // inventory/current doc that it (and the app) actually displays/edits — see
 // inventory_merge.h on the CH board.
-#define CAMERA_ROOF  2   // 1, 2, 3... — set per physical board
+#define CAMERA_ROOF  1   // 1, 2, 3... — set per physical board
 #define STRINGIFY2(x) #x
 #define STRINGIFY(x)  STRINGIFY2(x)
 #define INVENTORY_DOC_ID  "roof" STRINGIFY(CAMERA_ROOF)

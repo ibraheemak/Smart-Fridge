@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include "parameters.h"
 #include "SECRETS.h"
+#include "rtdb_notify.h"
 
 // ============================================================================
 // Timestamp helpers
@@ -294,7 +295,9 @@ bool saveToFirebase(JsonDocument& items_doc) {
   Serial.printf("[FIREBASE] save %s (%d items) -> inventory/%s\n",
                 (code==200||code==201) ? "OK" : "FAILED",
                 (int)items_doc["items"].as<JsonArray>().size(), INVENTORY_DOC_ID);
-  return (code == 200 || code == 201);
+  bool ok = (code == 200 || code == 201);
+  if (ok) rtdbNotifyInventoryChanged();
+  return ok;
 }
 
 bool saveTemperature(float tempC, float humidity) {

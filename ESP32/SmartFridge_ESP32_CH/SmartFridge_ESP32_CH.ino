@@ -1,16 +1,20 @@
 /*
  * Smart Fridge — Display ESP32 (CH9102 devkit)
  *
- * Polls Firestore for the current inventory and renders it on the display.
+ * Renders the current Firestore inventory on the display, refreshing the
+ * instant it changes via a Realtime Database SSE "doorbell" stream (see
+ * rtdb_stream.h) instead of polling on a timer.
  * Add new peripherals by creating a new header (e.g. sensors.h) and
  * including it here.
  *
  * File layout:
- *   display.h    — TFT + icon rendering
- *   parameters.h — pin assignments and tunable constants
- *   tft_setup.h  — TFT_eSPI pin config (auto-loaded by the library)
- *   SECRETS.h    — Firebase credentials
- *   gm65.h       — GM65 barcode scanner -> Open Food Facts -> inventory
+ *   display.h     — TFT + icon rendering
+ *   parameters.h  — pin assignments and tunable constants
+ *   tft_setup.h   — TFT_eSPI pin config (auto-loaded by the library)
+ *   SECRETS.h     — Firebase credentials
+ *   gm65.h        — GM65 barcode scanner -> Open Food Facts -> inventory
+ *   rtdb_notify.h — bumps the RTDB "inventory changed" doorbell after a write
+ *   rtdb_stream.h — listens on that doorbell to trigger an instant re-fetch
  */
 
 #include <WiFi.h>
@@ -30,12 +34,12 @@
 #include "espnow_link.h"
 #include "buzzer.h"
 #include "gm65.h"
+#include "rtdb_stream.h"
 
 // ============================================================================
 // STATE
 // ============================================================================
 String        g_last_signature = "";
-unsigned long g_last_poll_ms   = 0;
 unsigned long g_last_wifi_retry_ms = 0;
 unsigned long g_last_clock_ms  = 0;   // last home-screen footer clock redraw
 unsigned long g_last_temp_ms   = 0;   // last temperature/humidity fetch
@@ -315,7 +319,7 @@ void setup() {
   } else {
     showStatus("No data yet", "Waiting for fridge scan");
   }
-  g_last_poll_ms = millis();
+  initRtdbStream();
 
   // Fetch temperature & humidity once on boot so the home screen shows values immediately.
   fetchTemperature();
@@ -349,11 +353,10 @@ void loop() {
     if (fetchTemperature() && g_view == VIEW_HOME) renderHomeScreen();
   }
 
-  if (millis() - g_last_poll_ms >= INVENTORY_POLL_INTERVAL_MS) {
-    g_last_poll_ms = millis();
-    // Don't poll while the user is on the new-item/expiry-entry screen — it would
-    // overwrite the screen or disrupt an in-progress edit. Polling on VIEW_STATS is
-    // fine since that screen doesn't depend on g_items.
+  if (rtdbStreamPoll()) {
+    // Don't refresh while the user is on the new-item/expiry-entry screen — it
+    // would overwrite the screen or disrupt an in-progress edit. Refreshing on
+    // VIEW_STATS is fine since that screen doesn't depend on g_items.
     if (g_view == VIEW_HOME || g_view == VIEW_LIST || g_view == VIEW_STATS) {
       mergeRoofInventories();
       if (fetchInventory()) {
