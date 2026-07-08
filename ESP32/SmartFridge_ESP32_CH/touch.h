@@ -542,22 +542,29 @@ void handleTouch() {
   }
 
   if (g_view == VIEW_LIST) {
-    // Header "< Back" button (top-left) returns to the home screen. The zone
-    // is limited to the header height so it can't swallow taps on the up-arrow
-    // scroll strip that sits just below it. Drawn by renderInventory().
-    BtnRect listBackHit = {0, 0, 130, HEADER_HEIGHT_PX};
-    if (inBtn(listBackHit, tx, ty)) {
+    ListLayout l = computeListLayout();
+
+    // Header "< Back" button (top-left) returns to the home screen. Drawn by
+    // renderInventory(). Same 140px-tall hit zone as btnBackHit elsewhere
+    // (detail/stats/scan) — touch readings compress near the header and land
+    // lower than the actual tap (see TOP_ROW_HIT_EXTEND_PX below), so a zone
+    // limited to just HEADER_HEIGHT_PX made this button nearly unhittable.
+    // Kept narrow on x (0-130) so it doesn't swallow most of the up-arrow
+    // scroll strip (full width) — but the strip's left edge still falls
+    // inside that x range, so exclude it explicitly when it's on screen.
+    BtnRect listBackHit = {0, 0, 130, 140};
+    bool onUpArrow = l.show_up && ty >= l.up_y && ty < l.up_y + SCROLL_ARROW_H;
+    if (!onUpArrow && inBtn(listBackHit, tx, ty)) {
       g_view = VIEW_HOME;
       renderHomeScreen();
       return;
     }
 
-    ListLayout l = computeListLayout();
     if (ty < l.top || ty > l.bottom) return;
 
     // Up/down scroll strips span the full width, independent of the
     // right-edge "open details" arrow zone used by item rows.
-    if (l.show_up && ty >= l.up_y && ty < l.up_y + SCROLL_ARROW_H) {
+    if (onUpArrow) {
       g_list_scroll = max(0, g_list_scroll - l.rows_visible);
       renderInventory();
       return;
