@@ -633,7 +633,28 @@ void drawEmptyState() {
 
 void renderInventory() {
   tft.fillScreen(TFT_BLACK);
-  drawHeader();
+
+  // Header with a "< Back" button in the top-left (replaces the old footer
+  // "< Home"): the footer button sat in a screen corner where the touch
+  // panel reads least accurately, so it was hard to hit. This mirrors the
+  // stats / item-detail header back button. Drawn inline (not via touch.h's
+  // drawBtn) because display.h is included before touch.h.
+  int wHdr = tft.width();
+  tft.fillRect(0, 0, wHdr, HEADER_HEIGHT_PX, TFT_NAVY);
+  int bx = 8, by = 6, bw = 70, bh = HEADER_HEIGHT_PX - 12;
+  tft.fillRoundRect(bx, by, bw, bh, 6, TFT_DARKGREY);
+  tft.drawRoundRect(bx, by, bw, bh, 6, TFT_WHITE);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
+  tft.setTextSize(2);
+  tft.drawString("< Back", bx + bw / 2, by + bh / 2);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.setTextSize(2);
+  tft.drawString("Inventory", wHdr / 2, HEADER_HEIGHT_PX / 2);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextSize(1);
+  tft.drawString(String(g_item_count) + " items", wHdr - SIDE_PADDING_PX, HEADER_HEIGHT_PX / 2);
 
   // Clamp scroll in case the list shrank since the last render. Step down
   // one at a time rather than computing this in one shot — rows_visible
@@ -652,16 +673,14 @@ void renderInventory() {
     if (l.show_down) drawScrollArrow(l.down_y, false);
   }
 
-  // Footer: "< Home" on the left, last-updated timestamp on the right.
+  // Footer: last-updated timestamp only (the "< Home" button moved up to a
+  // "< Back" button in the header — see the header block above).
   int w2 = tft.width();
   int fy = tft.height() - FOOTER_HEIGHT_PX;
   tft.fillRect(0, fy, w2, FOOTER_HEIGHT_PX, TFT_DARKGREY);
-  tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(TFT_CYAN, TFT_DARKGREY);
-  tft.setTextSize(1);
-  tft.drawString("< Home", SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(TFT_LIGHTGREY, TFT_DARKGREY);
+  tft.setTextSize(1);
   String upd = g_updated_at.length() > 0 ? "Updated " + g_updated_at : "Waiting for scan...";
   tft.drawString(upd, w2 - SIDE_PADDING_PX, fy + FOOTER_HEIGHT_PX / 2);
 }

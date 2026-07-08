@@ -134,6 +134,38 @@ bool mergeRoofInventories() {
     }
   }
 
+  // Carry over any items already in /current that no roof reported this
+  // cycle — e.g. GM65 barcode scans, which write straight to /current and
+  // never appear in a roof doc. Without this, the very next merge (every
+  // poll) would silently drop them since the loop above only ever writes
+  // items that came from a roof doc.
+  if (has_existing) {
+    JsonArray existing_items = cur_doc["fields"]["items"]["arrayValue"]["values"];
+    for (JsonObject ev : existing_items) {
+      JsonObject emf = ev["mapValue"]["fields"];
+      String name = emf["name"]["stringValue"].as<String>();
+      if (name.length() == 0) continue;
+
+      bool already_merged = false;
+      for (int i = 0; i < merged_count; i++) {
+        if (merged[i].name.equalsIgnoreCase(name)) { already_merged = true; break; }
+      }
+      if (already_merged) continue;
+
+      JsonObject out = values.createNestedObject()["mapValue"]["fields"].to<JsonObject>();
+      out["name"]["stringValue"]       = name;
+      out["quantity"]["stringValue"]   = emf["quantity"]["stringValue"].as<String>();
+      out["confidence"]["stringValue"] = emf["confidence"]["stringValue"].as<String>();
+
+      JsonArray ea = emf["expiries"]["arrayValue"]["values"];
+      if (ea.size() > 0) {
+        JsonArray out_ea = out["expiries"]["arrayValue"]["values"].to<JsonArray>();
+        for (JsonObject ed : ea)
+          out_ea.createNestedObject()["stringValue"] = ed["stringValue"].as<String>();
+      }
+    }
+  }
+
   String payload;
   serializeJson(out_doc, payload);
   WiFiClientSecure client;
