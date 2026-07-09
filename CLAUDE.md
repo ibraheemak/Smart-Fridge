@@ -47,17 +47,29 @@ already in `/current` by item name. The display, touch-edit (expiry entry),
 and GM65 barcode-scan code all continue to read/write `/current` exactly as
 before — they're unaware of the per-roof split.
 
-## ESP-NOW link — CH → CAM (door-close scan trigger)
+## ESP-NOW link — CH ↔ CAM (door-close scan trigger + temperature push)
 
-One-way, wireless link — no wiring between any boards. CH detects door close
-(hall sensor) and **broadcasts** an ESP-NOW `"SCAN_TRIGGER"` packet
-(`FF:FF:FF:FF:FF:FF`); every CAM board (any roof) receives it in its recv
-callback and calls `captureAndProcess()` independently. Broadcast means
-adding/removing CAM boards needs no MAC-address bookkeeping on the CH side.
+Wireless link, no wiring between any boards, used in both directions:
 
 ```
-CH  (ESP-NOW broadcast, "SCAN_TRIGGER") ──────────► every CAM board
+CH  (unicast, "SCAN_TRIGGER") ──────────► every CAM board (per-roof MAC)
+CAM roof1  (unicast, "TEMP:<c>,<h>") ───► CH board
 ```
+
+- **CH → CAM (door-close scan trigger)**: CH detects door close (hall
+  sensor) and unicasts an ESP-NOW `"SCAN_TRIGGER"` packet to each known CAM
+  board's MAC (`CAM_MAC_ADDRS` in CH's `parameters.h`) — one send per roof,
+  not a broadcast, since 802.11 broadcast frames get no MAC-layer ACK/retry
+  (a broadcast was tried first and observed to sometimes silently miss a
+  CAM board). Each CAM board receives it in its recv callback and calls
+  `captureAndProcess()` independently.
+- **CAM roof1 → CH (temperature push)**: replaces CH polling Firestore for
+  temperature. The roof1 CAM board (the only one wired with a DHT11) reads
+  the sensor every `TEMP_READ_INTERVAL_MS` (60s), writes it to Firestore as
+  before for history (`saveTemperature()`), and **also** unicasts
+  `"TEMP:<tempC>,<humidity>"` straight to the CH board's MAC (`CH_MAC_ADDR`
+  in CAM's `parameters.h`) so the display updates instantly instead of
+  waiting on a timer.
 
 Both boards pin their WiFi radio to a fixed `ESPNOW_CHANNEL` (default 1, set
 in `parameters.h` on both boards) **before** trying to join the router.
@@ -69,10 +81,22 @@ keep working. If the router connection does succeed, the ESP32 WiFi stack
 switches to the AP's channel for as long as it's associated, and ESP-NOW
 keeps working either way (`peer.channel = 0`, i.e. "current channel").
 
-Implementation: `espnow_link.h` on both boards (`espnowSendScanTrigger()` on
-CH, `espnowScanTriggerReceived()` on CAM). `ESP32/SmartFridge_ESP32_GetMac/`
-(reading a board's own MAC) is no longer needed for this link now that it's a
-broadcast, but is kept around as a general-purpose utility sketch.
+Both directions are ordinary independently-addressed unicast frames, so
+simultaneous sends in opposite directions (e.g. a door-close trigger firing
+right as a temperature reading is due) are arbitrated by normal WiFi
+CSMA/CA at the radio layer — no application-level locking needed. Both
+recv callbacks (on the WiFi/LWIP task, not the Arduino loop() task) only
+parse their message and stash it in a `volatile`-flagged pending state;
+they never touch the TFT or call `esp_now_send()` themselves — that all
+happens from `loop()`.
+
+Implementation: `espnow_link.h` on both boards (`espnowSendScanTrigger()` /
+`espnowScanTriggerReceived()` for the door-close direction,
+`espnowSendTemperature()` / `espnowTemperatureReceived()` for the
+temperature direction). `ESP32/SmartFridge_ESP32_GetMac/` (reading a
+board's own MAC) is used to obtain each board's MAC for the `CAM_MAC_ADDRS`
+(CH) / `CH_MAC_ADDR` (CAM roof1) peer lists — flash it once, note the
+printed MAC, then reflash the board back to its real sketch.
 
 ## What's already working (DO NOT break)
 

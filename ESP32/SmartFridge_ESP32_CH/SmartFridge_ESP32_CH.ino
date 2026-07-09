@@ -42,7 +42,6 @@
 String        g_last_signature = "";
 unsigned long g_last_wifi_retry_ms = 0;
 unsigned long g_last_clock_ms  = 0;   // last home-screen footer clock redraw
-unsigned long g_last_temp_ms   = 0;   // last temperature/humidity fetch
 bool          g_was_offline    = false;
 String        g_wifi_ssid;
 String        g_wifi_pass;
@@ -321,9 +320,10 @@ void setup() {
   }
   initRtdbStream();
 
-  // Fetch temperature & humidity once on boot so the home screen shows values immediately.
-  fetchTemperature();
-  g_last_temp_ms = millis();
+  // Temperature/humidity arrive via ESP-NOW push from the roof1 CAM board
+  // (see espnowTemperatureReceived() below) — no fetch needed here. The home
+  // screen shows g_temp_c/g_humidity's "-1 = no data yet" state until the
+  // first push arrives.
 
   // Always start on the home screen after boot.
   if (g_view == VIEW_HOME) renderHomeScreen();
@@ -347,10 +347,13 @@ void loop() {
     replayOfflineBarcodes();
   }
 
-  // Fetch temperature & humidity every 60 seconds and refresh the home header.
-  if (millis() - g_last_temp_ms >= 60000UL) {
-    g_last_temp_ms = millis();
-    if (fetchTemperature() && g_view == VIEW_HOME) renderHomeScreen();
+  // Temperature/humidity pushed from the roof1 CAM board over ESP-NOW —
+  // refresh the home header the instant a new reading arrives.
+  float temp_c, humidity;
+  if (espnowTemperatureReceived(temp_c, humidity)) {
+    g_temp_c   = temp_c;
+    g_humidity = humidity;
+    if (g_view == VIEW_HOME) updateHomeHeaderSensors();
   }
 
   if (rtdbStreamPoll()) {

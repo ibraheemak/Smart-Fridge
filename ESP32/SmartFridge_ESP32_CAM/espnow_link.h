@@ -6,10 +6,13 @@
 #include "parameters.h"
 
 // ============================================================================
-// ESP-NOW link to the CH board — one-way, CH sends commands, this board
-// doesn't reply. Replaces the old 2-wire UART link (see git history /
-// uart_link.h). No wiring needed — see espnow_link.h on the CH board for why
-// the channel is pinned via ESPNOW_CHANNEL instead of relying on the router.
+// ESP-NOW link to the CH board — mostly one-way (CH sends SCAN_TRIGGER
+// commands, this board doesn't reply), but CAMERA_ROOF == 1 also pushes
+// DHT11 temperature/humidity readings back to CH (see
+// espnowSendTemperature() below) instead of CH polling Firestore for them.
+// Replaces the old 2-wire UART link (see git history / uart_link.h). No
+// wiring needed — see espnow_link.h on the CH board for why the channel is
+// pinned via ESPNOW_CHANNEL instead of relying on the router.
 // ============================================================================
 
 static volatile bool g_espnow_scan_trigger_pending = false;
@@ -29,6 +32,17 @@ void initEspNowLink() {
   }
 
   esp_now_register_recv_cb(onEspNowDataRecv);
+
+#if CAMERA_ROOF == 1
+  esp_now_peer_info_t ch_peer = {};
+  memcpy(ch_peer.peer_addr, CH_MAC_ADDR, 6);
+  ch_peer.channel = 0;   // track whatever channel the radio is currently on
+  ch_peer.encrypt = false;
+  if (!esp_now_is_peer_exist(CH_MAC_ADDR)) {
+    esp_now_add_peer(&ch_peer);
+  }
+#endif
+
   Serial.printf("[ESPNOW] link ready — listening (channel %d)\n", ESPNOW_CHANNEL);
 }
 
@@ -49,3 +63,17 @@ bool espnowScanTriggerReceived() {
   g_espnow_scan_trigger_pending = false;
   return true;
 }
+
+#if CAMERA_ROOF == 1
+// Fire-and-forget push of a fresh DHT11 reading to the CH board's display.
+// Called right after readTemperature()/saveTemperature() succeed — never
+// blocks (esp_now_send() queues the frame and returns immediately), so it
+// can't interfere with the DHT11 bit-banging or the SCAN_TRIGGER recv path
+// above, which run independently of this send.
+void espnowSendTemperature(float tempC, float humidity) {
+  char msg[32];
+  snprintf(msg, sizeof(msg), "TEMP:%.1f,%.1f", tempC, humidity);
+  esp_err_t result = esp_now_send(CH_MAC_ADDR, (const uint8_t *)msg, strlen(msg));
+  Serial.printf("[ESPNOW] >> %s -> %s\n", msg, result == ESP_OK ? "ok" : "failed");
+}
+#endif

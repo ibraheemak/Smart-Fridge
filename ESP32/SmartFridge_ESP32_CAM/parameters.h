@@ -79,6 +79,14 @@
 // ESPNOW_CHANNEL on the CH board.
 #define ESPNOW_CHANNEL          1
 
+// Reverse direction (CAMERA_ROOF == 1 only): pushes DHT11 readings straight
+// to the CH board's display over ESP-NOW instead of CH polling Firestore
+// for them (see espnowSendTemperature() in espnow_link.h). Read this board's
+// own MAC by flashing ESP32/SmartFridge_ESP32_GetMac/ onto the CH devkit
+// once (prints WiFi.macAddress() over serial), then reflash it back to
+// SmartFridge_ESP32_CH afterward.
+static uint8_t CH_MAC_ADDR[6] = { 0xA8, 0x42, 0xE3, 0x46, 0xE0, 0x64 };
+
 // ----------------------------------------------------------------------------
 // DHT11 TEMPERATURE / HUMIDITY SENSOR (US #8, #9) — wired on CAMERA_ROOF == 1 only
 // ----------------------------------------------------------------------------

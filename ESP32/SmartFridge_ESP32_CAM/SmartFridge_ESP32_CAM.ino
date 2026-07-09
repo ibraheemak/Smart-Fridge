@@ -185,6 +185,7 @@ void readAndPublishTemperature() {
   }
   Serial.printf("[TEMP] %.1f C, %.1f %% RH\n", tempC, humidity);
   saveTemperature(tempC, humidity);
+  espnowSendTemperature(tempC, humidity);
 }
 #endif
 

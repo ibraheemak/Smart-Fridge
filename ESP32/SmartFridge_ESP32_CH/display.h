@@ -352,47 +352,10 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
 // Home screen
 // ============================================================================
 
-// Live sensor values — fetched from Firestore sensors/temperature; -1 = no data yet.
+// Live sensor values — pushed by the roof1 CAM board over ESP-NOW (see
+// espnowTemperatureReceived() in espnow_link.h); -1 = no data yet.
 float g_temp_c    = -1.0f;
 float g_humidity  = -1.0f;
-
-// Fetch latest temperature & humidity from Firestore.
-// Path: fridges/{FRIDGE_ID}/sensors/temperature
-// Fields: temperature (doubleValue), humidity (doubleValue)
-bool fetchTemperature() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  String url =
-    "https://firestore.googleapis.com/v1/projects/" +
-    String(FIREBASE_PROJECT_ID) +
-    "/databases/(default)/documents/fridges/" +
-    String(FRIDGE_ID) +
-    "/sensors/temperature?key=" +
-    String(FIREBASE_API_KEY);
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  http.setTimeout(8000);
-  if (!http.begin(client, url)) return false;
-
-  int code = http.GET();
-  if (code != 200) { http.end(); return false; }
-
-  String body = http.getString();
-  http.end();
-
-  DynamicJsonDocument doc(512);
-  if (deserializeJson(doc, body)) return false;
-
-  JsonObject fields = doc["fields"];
-  if (fields.isNull()) return false;
-
-  g_temp_c   = fields["temperature"]["doubleValue"].as<float>();
-  g_humidity = fields["humidity"]["doubleValue"].as<float>();
-  Serial.printf("[TEMP] %.1f C  %.0f%%\n", g_temp_c, g_humidity);
-  return true;
-}
 
 // Tile IDs — used by handleTouch() to know which tile was tapped.
 #define HOME_TILE_INVENTORY  0
@@ -430,6 +393,48 @@ void drawHomeTile(HomeTile t, const char* icon, const char* label,
   }
 }
 
+// Home header's temperature/humidity readout — HDR (header height) must
+// match renderHomeScreen()'s. Split out so a new ESP-NOW reading can repaint
+// just this small corner (see updateHomeHeaderSensors()) instead of going
+// through renderHomeScreen()'s full tft.fillScreen() + tile/footer redraw,
+// which would otherwise flash the whole home screen every ~60s.
+#define HOME_HEADER_HEIGHT_PX 50
+
+void drawHomeHeaderSensors() {
+  int W = tft.width();
+
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextSize(1);
+  if (g_temp_c >= 0) {
+    char tbuf[12];
+    snprintf(tbuf, sizeof(tbuf), "%.1f C", g_temp_c);
+    tft.setTextColor(TFT_CYAN, TFT_NAVY);
+    tft.drawString(tbuf, W - 80, HOME_HEADER_HEIGHT_PX / 2);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
+    tft.drawString("--.- C", W - 80, HOME_HEADER_HEIGHT_PX / 2);
+  }
+
+  if (g_humidity >= 0) {
+    char hbuf[12];
+    snprintf(hbuf, sizeof(hbuf), "%.0f%%", g_humidity);
+    tft.setTextColor(TFT_SKYBLUE, TFT_NAVY);
+    tft.drawString(hbuf, W - SIDE_PADDING_PX, HOME_HEADER_HEIGHT_PX / 2);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
+    tft.drawString("--%", W - SIDE_PADDING_PX, HOME_HEADER_HEIGHT_PX / 2);
+  }
+}
+
+// Repaints only the temp/humidity corner of the home header — call this
+// (instead of renderHomeScreen()) when a new ESP-NOW reading arrives so the
+// rest of the screen (tiles, footer, clock) doesn't visibly flash.
+void updateHomeHeaderSensors() {
+  int W = tft.width();
+  tft.fillRect(W - 160, 0, 160, HOME_HEADER_HEIGHT_PX, TFT_NAVY);
+  drawHomeHeaderSensors();
+}
+
 void renderHomeScreen() {
   int W = tft.width();   // 480
   int H = tft.height();  // 320
@@ -437,7 +442,7 @@ void renderHomeScreen() {
   tft.fillScreen(TFT_BLACK);
 
   // ── Header ────────────────────────────────────────────────────────────────
-  const int HDR = 50;
+  const int HDR = HOME_HEADER_HEIGHT_PX;
   tft.fillRect(0, 0, W, HDR, TFT_NAVY);
 
   // Title
@@ -446,29 +451,7 @@ void renderHomeScreen() {
   tft.setTextSize(2);
   tft.drawString("Smart Fridge", SIDE_PADDING_PX, HDR / 2);
 
-  // Temperature
-  tft.setTextDatum(MR_DATUM);
-  tft.setTextSize(1);
-  if (g_temp_c >= 0) {
-    char tbuf[12];
-    snprintf(tbuf, sizeof(tbuf), "%.1f C", g_temp_c);
-    tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.drawString(tbuf, W - 80, HDR / 2);
-  } else {
-    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
-    tft.drawString("--.- C", W - 80, HDR / 2);
-  }
-
-  // Humidity
-  if (g_humidity >= 0) {
-    char hbuf[12];
-    snprintf(hbuf, sizeof(hbuf), "%.0f%%", g_humidity);
-    tft.setTextColor(TFT_SKYBLUE, TFT_NAVY);
-    tft.drawString(hbuf, W - SIDE_PADDING_PX, HDR / 2);
-  } else {
-    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
-    tft.drawString("--%", W - SIDE_PADDING_PX, HDR / 2);
-  }
+  drawHomeHeaderSensors();
 
   // ── Footer ────────────────────────────────────────────────────────────────
   const int FTR = 36;
