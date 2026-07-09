@@ -143,6 +143,7 @@ BtnRect btnBackHit;    // larger invisible touch zone (top-left edge is inaccura
 BtnRect btnDayMinus, btnDayPlus, btnMonMinus, btnMonPlus, btnYearMinus, btnYearPlus;
 BtnRect btnSave;
 BtnRect btnEnterExpiry, btnSkip;  // VIEW_NEW_ITEM notification screen
+BtnRect btnUnitPrev, btnUnitNext; // VIEW_DETAIL — step between units of the same item
 
 void drawBtn(BtnRect b, const String& label, uint16_t color) {
   tft.fillRoundRect(b.x, b.y, b.w, b.h, 6, color);
@@ -189,6 +190,23 @@ void layoutDetailButtons() {
   btnYearPlus  = {g2 + groupW - bw, y, bw, bh};
 
   btnSave = {(w - 140) / 2, y + 80, 140, 44};
+
+  // Unit prev/next arrows flank the centred Save button on the bottom row.
+  // Save spans x=(w-140)/2 .. +140 (170..310 at w=480), so these sit clear of
+  // it in the left/right margins.
+  int nav_y = y + 80, nav_w = 90, nav_h = 44;
+  btnUnitPrev = {8,              nav_y, nav_w, nav_h};
+  btnUnitNext = {w - 8 - nav_w,  nav_y, nav_w, nav_h};
+}
+
+// How many physical units of this item there are — one expiry slot per unit.
+// The .ino inventory diff already grows expiry_count to match quantity, but
+// fall back to the quantity string in case an item hasn't been through it yet.
+int itemUnitCount(const InventoryItem& it) {
+  int n = max((int)it.quantity.toInt(), it.expiry_count);
+  if (n < 1) n = 1;
+  if (n > MAX_EXPIRIES_PER_ITEM) n = MAX_EXPIRIES_PER_ITEM;
+  return n;
 }
 
 // ----------------------------------------------------------------------------
@@ -286,9 +304,11 @@ void drawItemDetail(int idx) {
   tft.drawString("Confidence: " + it.confidence, text_x, icon_y + 76);
 
   int editing_slot = currentExpiryIndex();
+  int unit_count   = itemUnitCount(it);
   String slot_label = "Expiry Date  (DD / MM / YYYY)";
-  if (it.expiry_count > 1)
-    slot_label = "Unit #" + String(editing_slot + 1) + "  Expiry  (DD / MM / YYYY)";
+  if (unit_count > 1)
+    slot_label = "Unit " + String(editing_slot + 1) + " / " + String(unit_count) +
+                 "   Expiry (DD / MM / YYYY)";
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
@@ -303,6 +323,14 @@ void drawItemDetail(int idx) {
   drawExpiryDate();
 
   drawBtn(btnSave, "Save", TFT_DARKGREEN);
+
+  // With several units, show left/right arrows flanking Save so the user can
+  // step through each unit and set its own expiry date. The "Unit X / N" label
+  // above tracks which unit is currently shown.
+  if (unit_count > 1) {
+    drawBtn(btnUnitPrev, "< Prev", TFT_NAVY);
+    drawBtn(btnUnitNext, "Next >", TFT_NAVY);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -670,6 +698,26 @@ void handleTouch() {
 
   // VIEW_DETAIL
   if (inBtn(btnBackHit, tx, ty))   { g_view = VIEW_LIST; renderInventory(); return; }
+
+  // Unit navigation — step to the previous/next unit of this item and load
+  // that unit's expiry into the editor (wraps around at the ends). Only active
+  // when the item actually has more than one unit.
+  {
+    InventoryItem& it = g_items[g_detail_index];
+    int unit_count = itemUnitCount(it);
+    if (unit_count > 1) {
+      int cur = currentExpiryIndex();
+      if (inBtn(btnUnitPrev, tx, ty)) {
+        openItemDetail(g_detail_index, (cur - 1 + unit_count) % unit_count);
+        return;
+      }
+      if (inBtn(btnUnitNext, tx, ty)) {
+        openItemDetail(g_detail_index, (cur + 1) % unit_count);
+        return;
+      }
+    }
+  }
+
   if (inBtn(btnDayMinus, tx, ty))  { adjustExpiry(-1, 0, 0); return; }
   if (inBtn(btnDayPlus, tx, ty))   { adjustExpiry(1, 0, 0);  return; }
   if (inBtn(btnMonMinus, tx, ty))  { adjustExpiry(0, -1, 0); return; }
