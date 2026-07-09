@@ -394,6 +394,16 @@ void loop() {
     checkEnvironmentAlert();
   }
 
+  // Live View — a requested roof's JPEG snapshot finishing reassembly, or a
+  // stalled transfer giving up (see espnow_link.h for the chunk protocol).
+  uint8_t lv_roof; uint8_t* lv_jpeg = nullptr; size_t lv_len = 0;
+  if (liveViewFrameReady(lv_roof, &lv_jpeg, &lv_len)) {
+    liveViewOnFrameReceived(lv_roof, lv_jpeg, lv_len);
+  }
+  if (liveViewTransferTimedOut()) {
+    liveViewOnTimeout();
+  }
+
   // Show a deferred alert once the user is back on an idle screen.
   serviceEnvironmentAlert();
 

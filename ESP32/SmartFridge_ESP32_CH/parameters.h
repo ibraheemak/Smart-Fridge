@@ -102,6 +102,10 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
   { 0x3C, 0x61, 0x05, 0x30, 0xBF, 0x00 },  // roof2 MAC
 };
 
+// Live View (US #11) — how long to wait for a requested roof's JPEG snapshot
+// to fully arrive over ESP-NOW before giving up and showing an error.
+#define LIVEVIEW_TIMEOUT_MS  6000
+
 // ----------------------------------------------------------------------------
 // GM65 BARCODE SCANNER (US #15 — manual product scanner)
 // ----------------------------------------------------------------------------

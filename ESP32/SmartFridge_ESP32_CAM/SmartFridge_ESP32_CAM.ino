@@ -301,6 +301,13 @@ void loop() {
     captureAndProcess();            // existing scan flow
   }
 
+  if (espnowLiveViewRequested()) {
+    Serial.println("[ESPNOW] LIVE_CAPTURE received — sending snapshot");
+    size_t sz = 0;
+    uint8_t* jpeg = capturePhotoForLiveView(&sz);
+    if (jpeg) { espnowSendLiveViewFrame(jpeg, sz); free(jpeg); }
+  }
+
   if (Serial.available())
     processSerialCommand(Serial.readStringUntil('\n'));
 
