@@ -66,10 +66,32 @@ const char* buzzerMelodyName() {
 }
 
 // ----------------------------------------------------------------------------
+// Buzzer polarity
+// ----------------------------------------------------------------------------
+// Cheap 3-pin buzzer *modules* (VCC/GND/S, with a driver transistor on board)
+// are usually ACTIVE-LOW: the "S" pin sounds the buzzer when driven LOW and is
+// SILENT when HIGH. A bare piezo wired straight to the GPIO is active-high.
+//
+// This matters because the LEDC duty cycle sets how much of the time the pin is
+// HIGH. If this flag is wrong you get the classic symptoms: volume runs
+// backwards (turning it "down" makes it louder) and the buzzer buzzes faintly
+// during the silent gaps between beeps. Our board's module is active-low.
+#ifndef BUZZER_ACTIVE_LOW
+#define BUZZER_ACTIVE_LOW 1
+#endif
+
+// ----------------------------------------------------------------------------
 // Low-level tone control (LEDC, volume via duty cycle)
 // ----------------------------------------------------------------------------
 void buzzerPlay(int freq) {
-  int duty = (128 * constrain(g_buzzer_volume, 0, 100)) / 100;  // 50% max
+  // volume% -> how hard the pin is driven toward the buzzer's sound-producing
+  // state. 255 = loudest (driven continuously), 0 = silent.
+  int soundDuty = (255 * constrain(g_buzzer_volume, 0, 100)) / 100;
+#if BUZZER_ACTIVE_LOW
+  int duty = 255 - soundDuty;   // active-low: pin LOW makes sound, so invert
+#else
+  int duty = soundDuty;         // active-high: pin HIGH makes sound
+#endif
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
   ledcChangeFrequency(BUZZER_PIN, freq, BUZZER_LEDC_RES);
   ledcWrite(BUZZER_PIN, duty);
@@ -80,10 +102,16 @@ void buzzerPlay(int freq) {
 }
 
 void buzzerSilence() {
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-  ledcWrite(BUZZER_PIN, 0);
+  // Drive the pin to the *quiet* state: HIGH for active-low, LOW for active-high.
+#if BUZZER_ACTIVE_LOW
+  int duty = 255;
 #else
-  ledcWrite(BUZZER_LEDC_CH, 0);
+  int duty = 0;
+#endif
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(BUZZER_PIN, duty);
+#else
+  ledcWrite(BUZZER_LEDC_CH, duty);
 #endif
 }
 
@@ -138,12 +166,11 @@ void updateBuzzer() {
 void initBuzzer() {
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
   ledcAttach(BUZZER_PIN, g_buzzer_freq, BUZZER_LEDC_RES);
-  ledcWrite(BUZZER_PIN, 0);
 #else
   ledcSetup(BUZZER_LEDC_CH, g_buzzer_freq, BUZZER_LEDC_RES);
   ledcAttachPin(BUZZER_PIN, BUZZER_LEDC_CH);
-  ledcWrite(BUZZER_LEDC_CH, 0);
 #endif
+  buzzerSilence();   // start in the quiet state (respects BUZZER_ACTIVE_LOW)
   Serial.printf("[BUZZER] init — GPIO%d (LEDC)\n", BUZZER_PIN);
 }
 
