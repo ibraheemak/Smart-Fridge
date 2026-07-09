@@ -526,10 +526,12 @@ void handleTouch() {
 
   // VIEW_HOME — large tile buttons
   if (g_view == VIEW_HOME) {
-    // Top-left "Settings" button. Touch readings compress near the top edge,
-    // so use a generous corner zone (nothing else is tappable there) rather
-    // than the button's exact drawn rect.
-    if (tx < 130 && ty < 60) { openSettingsScreen(); return; }
+    // Top-left "Settings" button. Touch readings are unreliable near the top
+    // edge (correctTouchY()'s linear fit is calibrated from taps much lower
+    // on the screen and overshoots up here) — mirror btnBackHit's proven
+    // generous top-left zone (0,0,160,140), used for the same reason on every
+    // other screen's "< Back" button, rather than the button's drawn rect.
+    if (tx < 160 && ty < 140) { openSettingsScreen(); return; }
 
     auto inTile = [](HomeTile t, int x, int y) {
       return x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h;
