@@ -352,47 +352,10 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
 // Home screen
 // ============================================================================
 
-// Live sensor values — fetched from Firestore sensors/temperature; -1 = no data yet.
+// Live sensor values — pushed by the roof1 CAM board over ESP-NOW (see
+// espnowTemperatureReceived() in espnow_link.h); -1 = no data yet.
 float g_temp_c    = -1.0f;
 float g_humidity  = -1.0f;
-
-// Fetch latest temperature & humidity from Firestore.
-// Path: fridges/{FRIDGE_ID}/sensors/temperature
-// Fields: temperature (doubleValue), humidity (doubleValue)
-bool fetchTemperature() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  String url =
-    "https://firestore.googleapis.com/v1/projects/" +
-    String(FIREBASE_PROJECT_ID) +
-    "/databases/(default)/documents/fridges/" +
-    String(FRIDGE_ID) +
-    "/sensors/temperature?key=" +
-    String(FIREBASE_API_KEY);
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  http.setTimeout(8000);
-  if (!http.begin(client, url)) return false;
-
-  int code = http.GET();
-  if (code != 200) { http.end(); return false; }
-
-  String body = http.getString();
-  http.end();
-
-  DynamicJsonDocument doc(512);
-  if (deserializeJson(doc, body)) return false;
-
-  JsonObject fields = doc["fields"];
-  if (fields.isNull()) return false;
-
-  g_temp_c   = fields["temperature"]["doubleValue"].as<float>();
-  g_humidity = fields["humidity"]["doubleValue"].as<float>();
-  Serial.printf("[TEMP] %.1f C  %.0f%%\n", g_temp_c, g_humidity);
-  return true;
-}
 
 // Tile IDs — used by handleTouch() to know which tile was tapped.
 #define HOME_TILE_INVENTORY  0
@@ -430,6 +393,81 @@ void drawHomeTile(HomeTile t, const char* icon, const char* label,
   }
 }
 
+// Home header's temperature/humidity readout — HDR (header height) must
+// match renderHomeScreen()'s. Split out so a new ESP-NOW reading can repaint
+// just the header (see updateHomeHeaderSensors()) instead of going through
+// renderHomeScreen()'s full tft.fillScreen() + tile/footer redraw, which
+// would otherwise flash the whole home screen every ~60s. There's no title
+// text anymore — temp/humidity occupy the header on their own, one on each
+// side of the same line.
+#define HOME_HEADER_HEIGHT_PX 50
+
+void drawHomeHeaderSensors() {
+  int W = tft.width();
+  int y = HOME_HEADER_HEIGHT_PX / 2;
+
+  tft.setTextSize(2);
+
+  tft.setTextDatum(ML_DATUM);
+  if (g_temp_c >= 0) {
+    char tbuf[20];
+    snprintf(tbuf, sizeof(tbuf), "Temp: %.1f C", g_temp_c);
+    tft.setTextColor(TFT_CYAN, TFT_NAVY);
+    tft.drawString(tbuf, SIDE_PADDING_PX, y);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
+    tft.drawString("Temp: --.- C", SIDE_PADDING_PX, y);
+  }
+
+  tft.setTextDatum(MR_DATUM);
+  if (g_humidity >= 0) {
+    char hbuf[20];
+    snprintf(hbuf, sizeof(hbuf), "Humidity: %.0f%%", g_humidity);
+    tft.setTextColor(TFT_SKYBLUE, TFT_NAVY);
+    tft.drawString(hbuf, W - SIDE_PADDING_PX, y);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
+    tft.drawString("Humidity: --%", W - SIDE_PADDING_PX, y);
+  }
+}
+
+// Repaints the whole home header — call this (instead of renderHomeScreen())
+// when a new ESP-NOW reading arrives so the rest of the screen (tiles,
+// footer, clock) doesn't visibly flash. Temp/humidity now span the full
+// header width (left/right), so there's no smaller corner left to target.
+void updateHomeHeaderSensors() {
+  int W = tft.width();
+  tft.fillRect(0, 0, W, HOME_HEADER_HEIGHT_PX, TFT_NAVY);
+  drawHomeHeaderSensors();
+}
+
+// Home footer height, shared between renderHomeScreen() and the clock's
+// per-second partial redraw below.
+#define HOME_FOOTER_HEIGHT_PX 36
+
+// Repaints just the HH:MM:SS clock in the footer's right corner — the date
+// next to it changes at most once a day, so redrawing the whole footer
+// every second (as renderHomeScreen() does for the initial paint) would
+// erase/redraw text that hasn't changed. Wide enough for "00:00:00" at
+// text size 1 with a little margin.
+#define HOME_CLOCK_WIDTH_PX 70
+
+void updateHomeFooterClock() {
+  int W = tft.width(), H = tft.height();
+  int fy = H - HOME_FOOTER_HEIGHT_PX;
+
+  time_t now_t = time(nullptr);
+  struct tm* tm_info = localtime(&now_t);
+  char time_buf[12];
+  strftime(time_buf, sizeof(time_buf), "%H:%M:%S", tm_info);
+
+  tft.fillRect(W - HOME_CLOCK_WIDTH_PX, fy, HOME_CLOCK_WIDTH_PX, HOME_FOOTER_HEIGHT_PX, 0x1082);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(TFT_WHITE, 0x1082);
+  tft.setTextSize(1);
+  tft.drawString(time_buf, W - SIDE_PADDING_PX, fy + HOME_FOOTER_HEIGHT_PX / 2);
+}
+
 void renderHomeScreen() {
   int W = tft.width();   // 480
   int H = tft.height();  // 320
@@ -437,59 +475,27 @@ void renderHomeScreen() {
   tft.fillScreen(TFT_BLACK);
 
   // ── Header ────────────────────────────────────────────────────────────────
-  const int HDR = 50;
+  const int HDR = HOME_HEADER_HEIGHT_PX;
   tft.fillRect(0, 0, W, HDR, TFT_NAVY);
 
-  // Title
-  tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.setTextSize(2);
-  tft.drawString("Smart Fridge", SIDE_PADDING_PX, HDR / 2);
-
-  // Temperature
-  tft.setTextDatum(MR_DATUM);
-  tft.setTextSize(1);
-  if (g_temp_c >= 0) {
-    char tbuf[12];
-    snprintf(tbuf, sizeof(tbuf), "%.1f C", g_temp_c);
-    tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.drawString(tbuf, W - 80, HDR / 2);
-  } else {
-    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
-    tft.drawString("--.- C", W - 80, HDR / 2);
-  }
-
-  // Humidity
-  if (g_humidity >= 0) {
-    char hbuf[12];
-    snprintf(hbuf, sizeof(hbuf), "%.0f%%", g_humidity);
-    tft.setTextColor(TFT_SKYBLUE, TFT_NAVY);
-    tft.drawString(hbuf, W - SIDE_PADDING_PX, HDR / 2);
-  } else {
-    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
-    tft.drawString("--%", W - SIDE_PADDING_PX, HDR / 2);
-  }
+  drawHomeHeaderSensors();
 
   // ── Footer ────────────────────────────────────────────────────────────────
-  const int FTR = 36;
+  const int FTR = HOME_FOOTER_HEIGHT_PX;
   int fy = H - FTR;
   tft.fillRect(0, fy, W, FTR, 0x1082);  // very dark grey
 
   time_t now = time(nullptr);
   struct tm* tm_info = localtime(&now);
-
-  char date_buf[32], time_buf[12];
+  char date_buf[32];
   strftime(date_buf, sizeof(date_buf), "%A, %d %b %Y", tm_info);
-  strftime(time_buf, sizeof(time_buf),  "%H:%M:%S",      tm_info);
 
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_LIGHTGREY, 0x1082);
   tft.setTextSize(1);
   tft.drawString(date_buf, SIDE_PADDING_PX, fy + FTR / 2);
 
-  tft.setTextDatum(MR_DATUM);
-  tft.setTextColor(TFT_WHITE, 0x1082);
-  tft.drawString(time_buf, W - SIDE_PADDING_PX, fy + FTR / 2);
+  updateHomeFooterClock();
 
   // ── Tiles ─────────────────────────────────────────────────────────────────
   // Two columns, two rows — bottom-right tile is empty for now.

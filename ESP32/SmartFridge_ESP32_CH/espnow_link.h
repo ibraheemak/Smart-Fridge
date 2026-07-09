@@ -6,9 +6,12 @@
 #include "parameters.h"
 
 // ============================================================================
-// ESP-NOW link to the CAM boards — one-way, CH sends commands, no CAM board
-// replies. Replaces the old 2-wire UART link (see git history / uart_link.h)
-// now that the hall sensor lives on this board.
+// ESP-NOW link to the CAM boards — mostly one-way (CH sends SCAN_TRIGGER,
+// CAM boards don't reply), but the roof1 CAM board also pushes DHT11
+// temperature/humidity readings back here (see espnowTemperatureReceived()
+// below) instead of this board polling Firestore for them. Replaces the old
+// 2-wire UART link (see git history / uart_link.h) now that the hall sensor
+// lives on this board.
 //
 // No wiring needed — rides on the same WiFi radio all boards already use for
 // Firestore. ESP-NOW is L2 and works peer-to-peer with no router/internet
@@ -32,6 +35,42 @@
 // of listing each board's MAC once below.
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// Temperature receive — pushed by the roof1 CAM board as "TEMP:<c>,<h>".
+// The callback runs on the WiFi/LWIP task, not the Arduino loop() task, so
+// it only parses the message and stashes the result in volatile globals +
+// a pending flag (same pattern CAM's espnow_link.h already uses for
+// SCAN_TRIGGER) — it never touches the TFT or calls esp_now_send() itself.
+// ----------------------------------------------------------------------------
+static volatile bool  g_espnow_temp_pending = false;
+static volatile float g_espnow_temp_c       = -1.0f;
+static volatile float g_espnow_humidity     = -1.0f;
+
+void onEspNowDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  if (len < 5 || memcmp(data, "TEMP:", 5) != 0) return;
+
+  char buf[32];
+  int n = min(len - 5, (int)sizeof(buf) - 1);
+  memcpy(buf, data + 5, n);
+  buf[n] = '\0';
+
+  float tempC, humidity;
+  if (sscanf(buf, "%f,%f", &tempC, &humidity) != 2) return;
+
+  g_espnow_temp_c   = tempC;
+  g_espnow_humidity = humidity;
+  g_espnow_temp_pending = true;
+}
+
+// Returns true exactly once when a fresh temperature reading arrives.
+bool espnowTemperatureReceived(float &tempC, float &humidity) {
+  if (!g_espnow_temp_pending) return false;
+  g_espnow_temp_pending = false;
+  tempC = g_espnow_temp_c;
+  humidity = g_espnow_humidity;
+  return true;
+}
+
 void initEspNowLink() {
   esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
 
@@ -39,6 +78,8 @@ void initEspNowLink() {
     Serial.println("[ESPNOW] init failed");
     return;
   }
+
+  esp_now_register_recv_cb(onEspNowDataRecv);
 
   for (int i = 0; i < NUM_ROOFS; i++) {
     esp_now_peer_info_t peer = {};

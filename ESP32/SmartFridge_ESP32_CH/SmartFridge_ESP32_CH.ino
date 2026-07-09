@@ -1,16 +1,20 @@
 /*
  * Smart Fridge — Display ESP32 (CH9102 devkit)
  *
- * Polls Firestore for the current inventory and renders it on the display.
+ * Renders the current Firestore inventory on the display, refreshing the
+ * instant it changes via a Realtime Database SSE "doorbell" stream (see
+ * rtdb_stream.h) instead of polling on a timer.
  * Add new peripherals by creating a new header (e.g. sensors.h) and
  * including it here.
  *
  * File layout:
- *   display.h    — TFT + icon rendering
- *   parameters.h — pin assignments and tunable constants
- *   tft_setup.h  — TFT_eSPI pin config (auto-loaded by the library)
- *   SECRETS.h    — Firebase credentials
- *   gm65.h       — GM65 barcode scanner -> Open Food Facts -> inventory
+ *   display.h     — TFT + icon rendering
+ *   parameters.h  — pin assignments and tunable constants
+ *   tft_setup.h   — TFT_eSPI pin config (auto-loaded by the library)
+ *   SECRETS.h     — Firebase credentials
+ *   gm65.h        — GM65 barcode scanner -> Open Food Facts -> inventory
+ *   rtdb_notify.h — bumps the RTDB "inventory changed" doorbell after a write
+ *   rtdb_stream.h — listens on that doorbell to trigger an instant re-fetch
  */
 
 #include <WiFi.h>
@@ -30,15 +34,14 @@
 #include "espnow_link.h"
 #include "buzzer.h"
 #include "gm65.h"
+#include "rtdb_stream.h"
 
 // ============================================================================
 // STATE
 // ============================================================================
 String        g_last_signature = "";
-unsigned long g_last_poll_ms   = 0;
 unsigned long g_last_wifi_retry_ms = 0;
 unsigned long g_last_clock_ms  = 0;   // last home-screen footer clock redraw
-unsigned long g_last_temp_ms   = 0;   // last temperature/humidity fetch
 bool          g_was_offline    = false;
 String        g_wifi_ssid;
 String        g_wifi_pass;
@@ -315,11 +318,12 @@ void setup() {
   } else {
     showStatus("No data yet", "Waiting for fridge scan");
   }
-  g_last_poll_ms = millis();
+  initRtdbStream();
 
-  // Fetch temperature & humidity once on boot so the home screen shows values immediately.
-  fetchTemperature();
-  g_last_temp_ms = millis();
+  // Temperature/humidity arrive via ESP-NOW push from the roof1 CAM board
+  // (see espnowTemperatureReceived() below) — no fetch needed here. The home
+  // screen shows g_temp_c/g_humidity's "-1 = no data yet" state until the
+  // first push arrives.
 
   // Always start on the home screen after boot.
   if (g_view == VIEW_HOME) renderHomeScreen();
@@ -343,17 +347,19 @@ void loop() {
     replayOfflineBarcodes();
   }
 
-  // Fetch temperature & humidity every 60 seconds and refresh the home header.
-  if (millis() - g_last_temp_ms >= 60000UL) {
-    g_last_temp_ms = millis();
-    if (fetchTemperature() && g_view == VIEW_HOME) renderHomeScreen();
+  // Temperature/humidity pushed from the roof1 CAM board over ESP-NOW —
+  // refresh the home header the instant a new reading arrives.
+  float temp_c, humidity;
+  if (espnowTemperatureReceived(temp_c, humidity)) {
+    g_temp_c   = temp_c;
+    g_humidity = humidity;
+    if (g_view == VIEW_HOME) updateHomeHeaderSensors();
   }
 
-  if (millis() - g_last_poll_ms >= INVENTORY_POLL_INTERVAL_MS) {
-    g_last_poll_ms = millis();
-    // Don't poll while the user is on the new-item/expiry-entry screen — it would
-    // overwrite the screen or disrupt an in-progress edit. Polling on VIEW_STATS is
-    // fine since that screen doesn't depend on g_items.
+  if (rtdbStreamPoll()) {
+    // Don't refresh while the user is on the new-item/expiry-entry screen — it
+    // would overwrite the screen or disrupt an in-progress edit. Refreshing on
+    // VIEW_STATS is fine since that screen doesn't depend on g_items.
     if (g_view == VIEW_HOME || g_view == VIEW_LIST || g_view == VIEW_STATS) {
       mergeRoofInventories();
       if (fetchInventory()) {
@@ -371,27 +377,11 @@ void loop() {
     }
   }
 
-  // Redraw the home-screen clock every second without a full re-render.
+  // Redraw just the home-screen clock every second — the date next to it
+  // doesn't change second-to-second, see updateHomeFooterClock() in display.h.
   if (g_view == VIEW_HOME && millis() - g_last_clock_ms >= 1000) {
     g_last_clock_ms = millis();
-    int W = tft.width(), H = tft.height();
-    const int FTR = 36;
-    int fy = H - FTR;
-
-    time_t now_t = time(nullptr);
-    struct tm* tm_info = localtime(&now_t);
-    char date_buf[32], time_buf[12];
-    strftime(date_buf, sizeof(date_buf), "%A, %d %b %Y", tm_info);
-    strftime(time_buf, sizeof(time_buf),  "%H:%M:%S",      tm_info);
-
-    tft.fillRect(0, fy, W, FTR, 0x1082);
-    tft.setTextDatum(ML_DATUM);
-    tft.setTextColor(TFT_LIGHTGREY, 0x1082);
-    tft.setTextSize(1);
-    tft.drawString(date_buf, SIDE_PADDING_PX, fy + FTR / 2);
-    tft.setTextDatum(MR_DATUM);
-    tft.setTextColor(TFT_WHITE, 0x1082);
-    tft.drawString(time_buf, W - SIDE_PADDING_PX, fy + FTR / 2);
+    updateHomeFooterClock();
   }
 
   handleTouch();

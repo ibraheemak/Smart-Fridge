@@ -6,7 +6,8 @@
 // Companion to SmartFridge_ESP32_CAM which handles camera scanning.
 // The CAM device writes inventory to Firestore at:
 //     fridges/{FRIDGE_ID}/inventory/current
-// This device polls that document and renders it on the ILI9488 TFT.
+// This device listens for changes via a Realtime Database SSE stream
+// (rtdb_stream.h) and renders the latest data on the ILI9488 TFT.
 //
 // TFT_eSPI is configured via tft_setup.h in this sketch folder.
 //
@@ -111,11 +112,6 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
 #define GM65_BAUD           9600
 #define GM65_IDLE_FLUSH_MS   100    // flush the read buffer after this much silence
 #define GM65_SCAN_TIMEOUT_MS 10000   // give up waiting for a read after this long (module's own single-read timeout is 5s, see gm65.h)
-
-// ----------------------------------------------------------------------------
-// REFRESH
-// ----------------------------------------------------------------------------
-#define INVENTORY_POLL_INTERVAL_MS  15000   // poll Firestore every 15 s
 
 // ----------------------------------------------------------------------------
 // TIMEZONE
