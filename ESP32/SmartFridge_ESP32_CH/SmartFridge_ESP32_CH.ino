@@ -22,10 +22,12 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include <esp_task_wdt.h>
 #include "time.h"
 
 #include "SECRETS.h"
 #include "parameters.h"
+#include "time_sync.h"
 #include "inventory_merge.h"
 #include "display.h"
 #include "touch.h"
@@ -195,9 +197,13 @@ void saveDoorState(bool closed) {
 
   // Match the timestamp format the CAM board uses for sensors/temperature
   // ("YYYY-MM-DD HH:MM:SS", local time) so the app shows both consistently.
-  time_t now = time(nullptr);
+  // Skip the write entirely if the clock hasn't synced yet — better to miss
+  // one door event than persist a bogus "1970-01-01" timestamp.
   char ts[20];
-  strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
+  if (!formatTimestampIfSynced(ts, sizeof(ts))) {
+    Serial.println("[DOOR] Skipping Firestore write — clock not synced yet");
+    return;
+  }
 
   String url =
     "https://firestore.googleapis.com/v1/projects/" +
@@ -271,16 +277,18 @@ void initWiFi() {
   Serial.printf("[WIFI] Connected: %s channel %d\n", WiFi.localIP().toString().c_str(), WiFi.channel());
 }
 
-void configureTime() {
-  configTzTime(TIMEZONE, "pool.ntp.org", "time.nist.gov");
-  time_t now = time(nullptr);
-  unsigned long t0 = millis();
-  while (now < 24 * 3600 && millis() - t0 < 10000) { delay(250); now = time(nullptr); }
-}
-
 // ============================================================================
 // SETUP / LOOP
 // ============================================================================
+// Recovers from a genuine hang (e.g. a stalled TLS connect) that would
+// otherwise freeze the display/touch forever with no watchdog to reset it.
+// loop() normally completes well under a second, but several network calls
+// in a single iteration can legitimately stack close to (RTDB connect 5s +
+// fetchInventory's 10s HTTP timeout, etc.) — give real headroom above that
+// so only a genuine hang (no timeout at all) trips it, not a slow-but-alive
+// sequence of requests.
+#define WATCHDOG_TIMEOUT_S 25
+
 void setup() {
   Serial.begin(115200);
   delay(500);
@@ -333,9 +341,31 @@ void setup() {
 
   // Always start on the home screen after boot.
   if (g_view == VIEW_HOME) renderHomeScreen();
+
+  // Arm the watchdog only now — everything above (WiFiManager portal, NTP
+  // wait) can legitimately run long and would otherwise trip it during boot.
+  //
+  // The ESP32 core already auto-initializes a TWDT instance at startup for
+  // the idle tasks (CONFIG_ESP_TASK_WDT_INIT=y, 5s timeout, panic-on-timeout
+  // — see sdkconfig) but never subscribes loopTask to it. esp_task_wdt_init()
+  // therefore returns ESP_ERR_INVALID_STATE here ("already initialized") and
+  // — critically — does NOT apply wdt_config's longer timeout; falling
+  // through to esp_task_wdt_add() in that case would subscribe loopTask to
+  // the pre-existing 5s instance instead of our 25s one, tripping on any
+  // ordinary multi-second loop() iteration. Reconfigure the existing
+  // instance instead so our timeout actually takes effect.
+  esp_task_wdt_config_t wdt_config = { WATCHDOG_TIMEOUT_S * 1000, 0, true };
+  if (esp_task_wdt_init(&wdt_config) == ESP_ERR_INVALID_STATE) {
+    esp_task_wdt_reconfigure(&wdt_config);
+  }
+  esp_task_wdt_add(NULL);
 }
 
 void loop() {
+  esp_task_wdt_reset();
+
+  retryTimeSyncIfNeeded();
+
   if (WiFi.status() != WL_CONNECTED) {
     g_was_offline = true;
     if (millis() - g_last_wifi_retry_ms >= WIFI_RECONNECT_INTERVAL_MS) {

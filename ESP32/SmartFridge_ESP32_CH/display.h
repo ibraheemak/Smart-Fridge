@@ -14,6 +14,7 @@
 
 #include "parameters.h"
 #include "SECRETS.h"
+#include "time_sync.h"
 
 // ============================================================================
 // TFT instance
@@ -483,10 +484,13 @@ void updateHomeFooterClock() {
   int W = tft.width(), H = tft.height();
   int fy = H - HOME_FOOTER_HEIGHT_PX;
 
-  time_t now_t = time(nullptr);
-  struct tm* tm_info = localtime(&now_t);
   char time_buf[12];
-  strftime(time_buf, sizeof(time_buf), "%H:%M:%S", tm_info);
+  if (isTimeSynced()) {
+    time_t now_t = time(nullptr);
+    strftime(time_buf, sizeof(time_buf), "%H:%M:%S", localtime(&now_t));
+  } else {
+    strcpy(time_buf, "--:--:--");
+  }
 
   tft.fillRect(W - HOME_CLOCK_WIDTH_PX, fy, HOME_CLOCK_WIDTH_PX, HOME_FOOTER_HEIGHT_PX, 0x1082);
   tft.setTextDatum(MR_DATUM);
@@ -512,10 +516,13 @@ void renderHomeScreen() {
   int fy = H - FTR;
   tft.fillRect(0, fy, W, FTR, 0x1082);  // very dark grey
 
-  time_t now = time(nullptr);
-  struct tm* tm_info = localtime(&now);
   char date_buf[32];
-  strftime(date_buf, sizeof(date_buf), "%A, %d %b %Y", tm_info);
+  if (isTimeSynced()) {
+    time_t now = time(nullptr);
+    strftime(date_buf, sizeof(date_buf), "%A, %d %b %Y", localtime(&now));
+  } else {
+    strcpy(date_buf, "Syncing time...");
+  }
 
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_LIGHTGREY, 0x1082);

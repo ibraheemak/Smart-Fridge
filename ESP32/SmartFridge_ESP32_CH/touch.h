@@ -422,9 +422,14 @@ void persistItemsToFirestore() {
   DynamicJsonDocument doc(8192);
   JsonObject fields = doc["fields"].to<JsonObject>();
 
-  time_t now = time(nullptr);
+  // Fall back to the last known-good timestamp (from the most recent
+  // fetchInventory()) instead of stamping a bogus "1970-01-01" if the clock
+  // hasn't synced yet — this write still needs to go out (it's the actual
+  // item/expiry data), just without corrupting updatedAt.
   char ts[20];
-  strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
+  if (!formatTimestampIfSynced(ts, sizeof(ts))) {
+    g_updated_at.toCharArray(ts, sizeof(ts));
+  }
   fields["updatedAt"]["stringValue"] = ts;
   fields["source"]["stringValue"]    = "ESP32-CH";
 

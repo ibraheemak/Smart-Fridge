@@ -318,6 +318,13 @@ String gm65QuoteFieldPath(const String& name) {
 bool saveBoughtItem(const String& item_name) {
   if (WiFi.status() != WL_CONNECTED) return false;
 
+  // Don't misfile this purchase into a bogus "1970-01" document if the clock
+  // hasn't synced yet — better to skip the stats increment than silently
+  // lose/misplace it under the wrong month.
+  if (!isTimeSynced()) {
+    Serial.println("[GM65][BOUGHT] Skipping — clock not synced yet");
+    return false;
+  }
   time_t now = time(nullptr);
   char month_id[8];
   strftime(month_id, sizeof(month_id), "%Y-%m", localtime(&now));
@@ -412,9 +419,12 @@ bool addScannedItemToInventory(const String& item_name) {
   DynamicJsonDocument doc(8192);
   JsonObject fields = doc["fields"].to<JsonObject>();
 
-  time_t now = time(nullptr);
+  // See persistItemsToFirestore() in touch.h — fall back to the last
+  // known-good timestamp instead of a bogus "1970-01-01" if unsynced.
   char ts[20];
-  strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
+  if (!formatTimestampIfSynced(ts, sizeof(ts))) {
+    g_updated_at.toCharArray(ts, sizeof(ts));
+  }
   fields["updatedAt"]["stringValue"] = ts;
   fields["source"]["stringValue"]    = "GM65";
 
