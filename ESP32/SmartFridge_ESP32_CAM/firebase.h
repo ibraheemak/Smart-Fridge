@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include "mbedtls/base64.h"
 #include "parameters.h"
 #include "SECRETS.h"
 #include "rtdb_notify.h"
@@ -322,6 +323,57 @@ bool saveTemperature(float tempC, float humidity) {
   http.end();
   Serial.printf("[FIREBASE] temperature save %s (%.1f C, %.1f %%)\n",
                 (code==200||code==201) ? "OK" : "FAILED", tempC, humidity);
+  return (code == 200 || code == 201);
+}
+
+// ============================================================================
+// Live View photo (Flutter app path) — fridges/{FRIDGE_ID}/liveview/roof{N}
+// ============================================================================
+// Triggered by liveViewRtdbStreamPoll() (see liveview_rtdb.h) instead of the
+// ESP-NOW request the CH touchscreen uses. Stores the JPEG straight in the
+// Firestore doc as a `bytesValue` (base64 on the wire — cloud_firestore's
+// Flutter SDK decodes it back to a Uint8List automatically), since a
+// QVGA/low-quality Live View frame is only ~10-20KB — comfortably under
+// Firestore's 1MiB document limit, so no separate Storage upload is needed.
+// Builds the JSON manually (like sendToGemini() in gemini.h) instead of via
+// ArduinoJson, since a StaticJsonDocument would keep a second full copy of
+// the base64 blob alongside this one.
+bool saveLiveViewPhotoToFirestore(const uint8_t* jpeg, size_t len) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  size_t enc_len = 0;
+  mbedtls_base64_encode(nullptr, 0, &enc_len, jpeg, len);
+
+  String prefix = String("{\"fields\":{\"capturedAt\":{\"stringValue\":\"") +
+                  getFormattedTimestamp() + "\"},\"photo\":{\"bytesValue\":\"";
+  const char* tail = "\"}}}";
+  size_t prefix_len = prefix.length(), tail_len = strlen(tail);
+
+  char* body = (char*)malloc(prefix_len + enc_len + tail_len + 1);
+  if (!body) { Serial.println("[LIVEVIEW] alloc failed"); return false; }
+
+  memcpy(body, prefix.c_str(), prefix_len);
+  size_t actual_enc = 0;
+  if (mbedtls_base64_encode((unsigned char*)(body + prefix_len), enc_len,
+                            &actual_enc, jpeg, len) != 0) {
+    free(body);
+    return false;
+  }
+  memcpy(body + prefix_len + actual_enc, tail, tail_len);
+  size_t body_len = prefix_len + actual_enc + tail_len;
+  body[body_len] = '\0';
+
+  String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+               "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
+               "/liveview/" + INVENTORY_DOC_ID + "?key=" + String(FIREBASE_API_KEY);
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.PATCH((uint8_t*)body, body_len);
+  free(body);
+  http.end();
+  Serial.printf("[LIVEVIEW] photo save %s (%u bytes -> liveview/%s)\n",
+                (code == 200 || code == 201) ? "OK" : "FAILED", (unsigned)len, INVENTORY_DOC_ID);
   return (code == 200 || code == 201);
 }
 

@@ -15,6 +15,7 @@ dependencies:
   cloud_firestore: ^5.1.0
   firebase_storage: ^12.1.0
   firebase_auth: ^5.1.0
+  firebase_database: ^11.1.0
 
   # Networking & images
   http: ^1.2.1
