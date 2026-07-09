@@ -361,9 +361,15 @@ float g_humidity  = -1.0f;
 #define HOME_TILE_INVENTORY  0
 #define HOME_TILE_SCAN       1
 #define HOME_TILE_STATS      2
+#define HOME_TILE_LIVE       3
+#define HOME_TILE_NOTIF      4
 
 struct HomeTile { int x, y, w, h; };
-HomeTile g_home_tiles[3];
+HomeTile g_home_tiles[5];
+
+// Total notification count — defined in notifications.h (included after this
+// file). Declared here so the home ALERTS tile can show it as a sub-label.
+extern int g_notif_count;
 
 // Top-left "Settings" button on the home header — hit-tested by handleTouch().
 HomeTile g_home_settings_btn = {8, 8, 96, 34};
@@ -378,21 +384,22 @@ void drawHomeTile(HomeTile t, const char* icon, const char* label,
   int cx = t.x + t.w / 2;
   int cy = t.y + t.h / 2;
 
-  // Icon (large)
+  // Icon (large). Offsets kept compact so all three lines fit the shorter
+  // tiles of the 2-column x 3-row home grid (see renderHomeScreen()).
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(fg, bg);
   tft.setTextSize(3);
-  tft.drawString(icon, cx, cy - 22);
+  tft.drawString(icon, cx, cy - 18);
 
   // Label
   tft.setTextSize(2);
-  tft.drawString(label, cx, cy + 12);
+  tft.drawString(label, cx, cy + 10);
 
   // Sub-label (small)
   if (sub && sub[0]) {
     tft.setTextSize(1);
     tft.setTextColor(TFT_LIGHTGREY, bg);
-    tft.drawString(sub, cx, cy + 32);
+    tft.drawString(sub, cx, cy + 28);
   }
 }
 
@@ -518,20 +525,29 @@ void renderHomeScreen() {
   updateHomeFooterClock();
 
   // ── Tiles ─────────────────────────────────────────────────────────────────
-  // Two columns, two rows — bottom-right tile is empty for now.
+  // Two columns x three rows — five tiles plus one empty cell (bottom-right).
+  // The 2-column width (240px) is kept deliberately: the top-left "Settings"
+  // hit zone (handleTouch: tx<160 && ty<140) covers the left ~160px near the
+  // header, so the top-left tile needs its right portion (x 160..240) free to
+  // stay tappable. A 3-column layout would put a whole tile under that zone.
   int tile_area_h = fy - HDR;
-  int col0 = 0,       col1 = W / 2;
   int colW = W / 2;
-  int row0 = HDR,     row1 = HDR + tile_area_h / 2;
-  int rowH = tile_area_h / 2;
+  int col0 = 0, col1 = colW;
+  int rowH = tile_area_h / 3;
+  int row0 = HDR, row1 = HDR + rowH, row2 = HDR + 2 * rowH;
 
   g_home_tiles[HOME_TILE_INVENTORY] = {col0, row0, colW, rowH};
   g_home_tiles[HOME_TILE_SCAN]      = {col1, row0, colW, rowH};
   g_home_tiles[HOME_TILE_STATS]     = {col0, row1, colW, rowH};
+  g_home_tiles[HOME_TILE_LIVE]      = {col1, row1, colW, rowH};
+  g_home_tiles[HOME_TILE_NOTIF]     = {col0, row2, colW, rowH};
 
-  // Tile backgrounds
   char inv_sub[20];
   snprintf(inv_sub, sizeof(inv_sub), "%d items", g_item_count);
+
+  char notif_sub[20];
+  if (g_notif_count > 0) snprintf(notif_sub, sizeof(notif_sub), "%d total", g_notif_count);
+  else                   snprintf(notif_sub, sizeof(notif_sub), "None");
 
   drawHomeTile(g_home_tiles[HOME_TILE_INVENTORY],
                "[]", "INVENTORY", inv_sub, 0x0949, TFT_CYAN);
@@ -539,14 +555,18 @@ void renderHomeScreen() {
                "|>", "SCAN", "Barcode scanner", 0x0820, TFT_GREENYELLOW);
   drawHomeTile(g_home_tiles[HOME_TILE_STATS],
                "##", "THIS MONTH", "Statistics", 0x4800, TFT_ORANGE);
+  drawHomeTile(g_home_tiles[HOME_TILE_LIVE],
+               "()", "LIVE VIEW", "Camera feed", 0x2009, 0xFD59 /* light pink */);
+  drawHomeTile(g_home_tiles[HOME_TILE_NOTIF],
+               "!", "ALERTS", notif_sub, 0x5000, TFT_YELLOW);
 
   // Empty bottom-right — subtle placeholder
-  tft.fillRoundRect(col1 + 4, row1 + 4, colW - 8, rowH - 8, 12, 0x0841);
-  tft.drawRoundRect(col1 + 4, row1 + 4, colW - 8, rowH - 8, 12, 0x2104);
+  tft.fillRoundRect(col1 + 4, row2 + 4, colW - 8, rowH - 8, 12, 0x0841);
+  tft.drawRoundRect(col1 + 4, row2 + 4, colW - 8, rowH - 8, 12, 0x2104);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(0x2104, 0x0841);
   tft.setTextSize(1);
-  tft.drawString("Coming soon", col1 + colW / 2, row1 + rowH / 2);
+  tft.drawString("Coming soon", col1 + colW / 2, row2 + rowH / 2);
 }
 
 // ============================================================================

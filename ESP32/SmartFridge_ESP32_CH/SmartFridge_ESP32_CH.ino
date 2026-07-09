@@ -34,6 +34,8 @@
 #include "espnow_link.h"
 #include "buzzer.h"
 #include "settings.h"
+#include "liveview.h"
+#include "notifications.h"
 #include "gm65.h"
 #include "rtdb_stream.h"
 
@@ -309,6 +311,8 @@ void setup() {
   initDoorSensor();
   initBuzzer();
   initSettings();   // load buzzer/door-alert/temp-humidity prefs, apply them
+  loadNotifications();     // restore the persisted alerts log + retention setting
+  purgeOldNotifications(); // drop anything already past its retention window
   initGM65();
 
   showStatus("Loading inventory", "");
@@ -412,9 +416,21 @@ void loop() {
   if (doorOpenTooLong()) {
     Serial.println("[DOOR] Open too long — buzzing!");
     buzzFor(g_buzzer_duration_ms);
+    addNotification("Door left open");
   }
 
   updateBuzzer();
+
+  // Periodically drop notifications past their retention window (the user-set
+  // "auto-delete after X days" in Alert Settings). Cheap and infrequent.
+  static unsigned long g_last_notif_purge_ms = 0;
+  if (millis() - g_last_notif_purge_ms >= 300000UL) {   // every 5 min
+    g_last_notif_purge_ms = millis();
+    if (purgeOldNotifications()) {
+      saveNotifications();
+      if (g_view == VIEW_HOME) renderHomeScreen();
+    }
+  }
 
   delay(50);
 }
