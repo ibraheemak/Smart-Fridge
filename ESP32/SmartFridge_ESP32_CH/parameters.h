@@ -123,7 +123,9 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
 // ----------------------------------------------------------------------------
 #define HEADER_HEIGHT_PX    40
 #define FOOTER_HEIGHT_PX    24
-#define ROW_HEIGHT_PX       76
+// 64px so 3 rows + both up/down scroll buttons still fit the 248px list
+// area (44..292 in the 480x320 landscape panel): 3*64 + 2*28 = 248.
+#define ROW_HEIGHT_PX       64
 #define ROW_GAP_PX           6   // visual gap between item rows
 #define ROW_TAP_DEADZONE_PX  2   // touch dead zone near row borders (keep small — a
                                   // larger value rejects taps across most of the row
@@ -135,9 +137,10 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
                                   // the top edge of the panel
 #define SIDE_PADDING_PX     12
 #define MAX_ITEMS_DISPLAYED  32
-#define SCROLL_ARROW_H       28  // height of the up/down list-scroll strips
-#define SCROLL_ARROW_BOX_W   70  // width of the corner box drawn inside each
-                                  // scroll strip (rest of the strip is blank)
+#define SCROLL_ARROW_H       28  // height of the tappable up/down scroll-button strips
+#define SCROLL_ARROW_BOX_W   56  // width of the rounded button drawn inside each strip
+                                  // (rest of the strip is blank but still tappable, for
+                                  // a bigger/more forgiving touch target)
 
 // ----------------------------------------------------------------------------
 // TOUCH (XPT2046)

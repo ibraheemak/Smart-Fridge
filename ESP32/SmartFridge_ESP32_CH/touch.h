@@ -25,9 +25,23 @@
 #include "rtdb_notify.h"
 
 // Defined in stats.h, included after this file — forward-declared here since
-// handleTouch() needs to trigger the stats screen on tap.
+// handleTouch() needs to trigger the stats screen on tap and page its
+// up/down scroll buttons.
 bool fetchBoughtStats();
 void renderStatsScreen();
+struct StatsLayout {
+  int  top, bottom;
+  bool show_up;
+  int  up_y;
+  int  rows_y0;
+  int  rows_visible;
+  bool show_down;
+  int  down_y;
+  int  page_step;
+};
+StatsLayout computeStatsLayout();
+extern int g_bought_count;
+extern int g_stats_scroll;
 
 // Defined in gm65.h, included after this file — forward-declared here since
 // handleTouch() needs to arm a barcode scan on tap of the footer "Scan" button.
@@ -527,9 +541,25 @@ void handleTouch() {
     return;
   }
 
-  // VIEW_STATS — same header "< Back" button as the item-detail page.
+  // VIEW_STATS — same header "< Back" button as the item-detail page, plus
+  // the same up/down scroll buttons as the inventory list.
   if (g_view == VIEW_STATS) {
-    if (inBtn(btnBackHit, tx, ty)) { g_view = VIEW_HOME; renderHomeScreen(); }
+    if (inBtn(btnBackHit, tx, ty)) { g_view = VIEW_HOME; renderHomeScreen(); return; }
+
+    StatsLayout sl = computeStatsLayout();
+    if (sl.show_up && ty >= sl.up_y && ty < sl.up_y + SCROLL_ARROW_H) {
+      g_stats_scroll = max(0, g_stats_scroll - sl.page_step);
+      renderStatsScreen();
+      return;
+    }
+    if (sl.show_down && ty >= sl.down_y && ty < sl.down_y + SCROLL_ARROW_H) {
+      // See the matching comment on the inventory list's down-button handler
+      // above — no backfill clamp, so a partial last page just shows the
+      // remaining items instead of re-showing some from the previous page.
+      g_stats_scroll = min(g_bought_count, g_stats_scroll + sl.page_step);
+      renderStatsScreen();
+      return;
+    }
     return;
   }
 
@@ -551,12 +581,8 @@ void handleTouch() {
     // (detail/stats/scan) — touch readings compress near the header and land
     // lower than the actual tap (see TOP_ROW_HIT_EXTEND_PX below), so a zone
     // limited to just HEADER_HEIGHT_PX made this button nearly unhittable.
-    // Kept narrow on x (0-130) so it doesn't swallow most of the up-arrow
-    // scroll strip (full width) — but the strip's left edge still falls
-    // inside that x range, so exclude it explicitly when it's on screen.
     BtnRect listBackHit = {0, 0, 130, 140};
-    bool onUpArrow = l.show_up && ty >= l.up_y && ty < l.up_y + SCROLL_ARROW_H;
-    if (!onUpArrow && inBtn(listBackHit, tx, ty)) {
+    if (inBtn(listBackHit, tx, ty)) {
       g_view = VIEW_HOME;
       renderHomeScreen();
       return;
@@ -564,15 +590,21 @@ void handleTouch() {
 
     if (ty < l.top || ty > l.bottom) return;
 
-    // Up/down scroll strips span the full width, independent of the
-    // right-edge "open details" arrow zone used by item rows.
-    if (onUpArrow) {
-      g_list_scroll = max(0, g_list_scroll - l.rows_visible);
+    // Up/down scroll buttons (see drawScrollArrow() in display.h) — the
+    // full strip height is tappable, not just the drawn button graphic,
+    // for a bigger and more forgiving touch target.
+    if (l.show_up && ty >= l.up_y && ty < l.up_y + SCROLL_ARROW_H) {
+      g_list_scroll = max(0, g_list_scroll - l.page_step);
       renderInventory();
       return;
     }
     if (l.show_down && ty >= l.down_y && ty < l.down_y + SCROLL_ARROW_H) {
-      g_list_scroll = min(max(0, g_item_count - l.rows_visible), g_list_scroll + l.rows_visible);
+      // No "backfill to a full last page" clamp here on purpose — show_down
+      // only appears when more than a full page remains, so stepping forward
+      // by page_step always lands on unseen items; clamping to
+      // g_item_count - page_step would instead walk back onto items already
+      // shown on the previous page whenever the last page is partial.
+      g_list_scroll = min(g_item_count, g_list_scroll + l.page_step);
       renderInventory();
       return;
     }

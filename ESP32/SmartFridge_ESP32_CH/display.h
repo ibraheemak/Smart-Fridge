@@ -553,6 +553,7 @@ struct ListLayout {
   int  rows_visible;     // how many rows fit given the arrow strips shown
   bool show_down;        // more items below the visible window
   int  down_y;           // down-arrow strip top (only valid if show_down)
+  int  page_step;        // rows to move per up/down tap — see note below
 };
 
 ListLayout computeListLayout() {
@@ -574,28 +575,39 @@ ListLayout computeListLayout() {
   // just the screen-space ceiling, not the real count.
   l.rows_visible = min(capacity, remaining);
 
+  // Fixed step for the up/down buttons — always the full-page row count
+  // (as if both arrow strips were reserved), not rows_visible. rows_visible
+  // shrinks to a partial page on the last screenful, and stepping by that
+  // smaller number when paging back up would land short of the previous
+  // page's start, re-showing a few items that were already on screen.
+  l.page_step = max(1, (l.bottom - l.top - 2 * SCROLL_ARROW_H) / ROW_HEIGHT_PX);
+
   l.up_y     = l.top;
   l.rows_y0  = l.top + (l.show_up ? SCROLL_ARROW_H : 0);
   l.down_y   = l.rows_y0 + l.rows_visible * ROW_HEIGHT_PX;
   return l;
 }
 
-// Reserved strip is SCROLL_ARROW_H tall across the full row width (so the
-// tap target stays easy to hit), but only a small rounded box in the
-// right-hand corner of that strip is actually drawn — the rest of the strip
-// stays plain black so it doesn't read as another full-width row.
+// Up/down scroll button — a small rounded pill in the right-hand corner,
+// styled to match the header's "< Back" button (dark-grey fill, white
+// border) so it reads as part of the same UI language, plus a soft top
+// highlight for a bit of depth. The reserved strip is SCROLL_ARROW_H tall
+// across the full row width so the tappable area (handled in touch.h) stays
+// generous, but only this compact button is actually drawn — the rest of
+// the strip stays plain black so it doesn't read as another full-width row.
 void drawScrollArrow(int y, bool pointingUp) {
   int w = tft.width();
   tft.fillRect(0, y, w, SCROLL_ARROW_H, TFT_BLACK);
 
   int boxW = SCROLL_ARROW_BOX_W, boxH = SCROLL_ARROW_H - 6;
   int bx = w - boxW - SIDE_PADDING_PX, by = y + 3;
-  tft.fillRoundRect(bx, by, boxW, boxH, 6, 0x2104);
-  tft.drawRoundRect(bx, by, boxW, boxH, 6, TFT_DARKGREY);
+  tft.fillRoundRect(bx, by, boxW, boxH, 8, TFT_DARKGREY);
+  tft.drawRoundRect(bx, by, boxW, boxH, 8, TFT_WHITE);
+  tft.drawFastHLine(bx + 8, by + 2, boxW - 16, 0x4A69);  // subtle top highlight
 
   int cx = bx + boxW / 2, cy = by + boxH / 2;
-  if (pointingUp) tft.fillTriangle(cx - 8, cy + 5, cx + 8, cy + 5, cx, cy - 5, TFT_LIGHTGREY);
-  else             tft.fillTriangle(cx - 8, cy - 5, cx + 8, cy - 5, cx, cy + 5, TFT_LIGHTGREY);
+  if (pointingUp) tft.fillTriangle(cx - 8, cy + 5, cx + 8, cy + 5, cx, cy - 6, TFT_WHITE);
+  else             tft.fillTriangle(cx - 8, cy - 5, cx + 8, cy - 5, cx, cy + 6, TFT_WHITE);
 }
 
 void drawItemRow(int index, int y) {
