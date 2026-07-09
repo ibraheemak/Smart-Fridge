@@ -189,7 +189,7 @@ void layoutDetailButtons() {
 // The .ino inventory diff already grows expiry_count to match quantity, but
 // fall back to the quantity string in case an item hasn't been through it yet.
 int itemUnitCount(const InventoryItem& it) {
-  int n = max(it.quantity.toInt(), it.expiry_count);
+  int n = max((int)it.quantity.toInt(), it.expiry_count);
   if (n < 1) n = 1;
   if (n > MAX_EXPIRIES_PER_ITEM) n = MAX_EXPIRIES_PER_ITEM;
   return n;
