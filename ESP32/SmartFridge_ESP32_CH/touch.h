@@ -63,6 +63,13 @@ ViewState     g_view          = VIEW_HOME;
 int           g_detail_index  = -1;
 unsigned long g_last_touch_ms = 0;
 
+// Which screen the alert-settings sub-screen (VIEW_NOTIF_SETTINGS) should
+// return to on "< Back": the main Settings screen when reached from there, or
+// the alerts list when reached via its "Config" button. Set by each caller
+// before openNotifSettingsScreen(). Declared here (early) so both settings.h
+// and notifications.h can see it.
+ViewState g_notif_settings_prev = VIEW_NOTIFICATIONS;
+
 int g_exp_year = 0, g_exp_month = 0, g_exp_day = 0;
 
 // ----------------------------------------------------------------------------
