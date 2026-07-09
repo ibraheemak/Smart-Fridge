@@ -37,10 +37,16 @@ void beginGM65ScanSession();
 // Cancels an in-progress scan (user tapped "< Back" on the scanning screen).
 void cancelGM65Scan();
 
+// Defined in settings.h, included after this file — handleTouch() dispatches
+// taps to the Settings screen and the environment-alert screen.
+void openSettingsScreen();
+void handleSettingsTouch(int x, int y);
+void handleAlertTouch(int x, int y);
+
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN };
+enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_ALERT };
 
 ViewState     g_view          = VIEW_HOME;
 int           g_detail_index  = -1;
@@ -507,8 +513,19 @@ void handleTouch() {
 
   Serial.printf("[TOUCH] x=%d y=%d (corrected) view=%d\n", tx, ty, g_view);
 
+  // VIEW_ALERT — CLOSE the out-of-range environment alert.
+  if (g_view == VIEW_ALERT)    { handleAlertTouch(tx, ty); return; }
+
+  // VIEW_SETTINGS — buzzer/door-alert/temp/humidity controls.
+  if (g_view == VIEW_SETTINGS) { handleSettingsTouch(tx, ty); return; }
+
   // VIEW_HOME — large tile buttons
   if (g_view == VIEW_HOME) {
+    // Top-left "Settings" button. Touch readings compress near the top edge,
+    // so use a generous corner zone (nothing else is tappable there) rather
+    // than the button's exact drawn rect.
+    if (tx < 130 && ty < 60) { openSettingsScreen(); return; }
+
     auto inTile = [](HomeTile t, int x, int y) {
       return x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h;
     };

@@ -33,6 +33,7 @@
 #include "door.h"
 #include "espnow_link.h"
 #include "buzzer.h"
+#include "settings.h"
 #include "gm65.h"
 #include "rtdb_stream.h"
 
@@ -307,6 +308,7 @@ void setup() {
   configureTime();
   initDoorSensor();
   initBuzzer();
+  initSettings();   // load buzzer/door-alert/temp-humidity prefs, apply them
   initGM65();
 
   showStatus("Loading inventory", "");
@@ -354,7 +356,12 @@ void loop() {
     g_temp_c   = temp_c;
     g_humidity = humidity;
     if (g_view == VIEW_HOME) updateHomeHeaderSensors();
+    // Raise (or clear) the out-of-range alert on every fresh reading.
+    checkEnvironmentAlert();
   }
+
+  // Show a deferred alert once the user is back on an idle screen.
+  serviceEnvironmentAlert();
 
   if (rtdbStreamPoll()) {
     // Don't refresh while the user is on the new-item/expiry-entry screen — it

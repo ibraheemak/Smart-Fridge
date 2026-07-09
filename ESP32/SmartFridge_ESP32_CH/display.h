@@ -365,6 +365,9 @@ float g_humidity  = -1.0f;
 struct HomeTile { int x, y, w, h; };
 HomeTile g_home_tiles[3];
 
+// Top-left "Settings" button on the home header — hit-tested by handleTouch().
+HomeTile g_home_settings_btn = {8, 8, 96, 34};
+
 // Draw one home-screen tile.  bg is the fill colour; icon is a short emoji/
 // ASCII string shown large above the label.
 void drawHomeTile(HomeTile t, const char* icon, const char* label,
@@ -402,32 +405,49 @@ void drawHomeTile(HomeTile t, const char* icon, const char* label,
 // side of the same line.
 #define HOME_HEADER_HEIGHT_PX 50
 
+// Top-left settings entry point. A later reading repaints the whole header
+// (updateHomeHeaderSensors()), so this is redrawn alongside the sensors.
+void drawHomeSettingsButton() {
+  HomeTile b = g_home_settings_btn;
+  tft.fillRoundRect(b.x, b.y, b.w, b.h, 6, 0x2945);   // muted blue-grey
+  tft.drawRoundRect(b.x, b.y, b.w, b.h, 6, TFT_WHITE);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, 0x2945);
+  tft.setTextSize(1);
+  tft.drawString("SETTINGS", b.x + b.w / 2, b.y + b.h / 2);
+}
+
+// Header layout: [Settings]  ...  Humidity (center)  ...  Temp (right).
 void drawHomeHeaderSensors() {
   int W = tft.width();
   int y = HOME_HEADER_HEIGHT_PX / 2;
 
+  drawHomeSettingsButton();
+
   tft.setTextSize(2);
 
-  tft.setTextDatum(ML_DATUM);
-  if (g_temp_c >= 0) {
-    char tbuf[20];
-    snprintf(tbuf, sizeof(tbuf), "Temp: %.1f C", g_temp_c);
-    tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.drawString(tbuf, SIDE_PADDING_PX, y);
-  } else {
-    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
-    tft.drawString("Temp: --.- C", SIDE_PADDING_PX, y);
-  }
-
-  tft.setTextDatum(MR_DATUM);
+  // Humidity — centered.
+  tft.setTextDatum(MC_DATUM);
   if (g_humidity >= 0) {
     char hbuf[20];
-    snprintf(hbuf, sizeof(hbuf), "Humidity: %.0f%%", g_humidity);
+    snprintf(hbuf, sizeof(hbuf), "Hum: %.0f%%", g_humidity);
     tft.setTextColor(TFT_SKYBLUE, TFT_NAVY);
-    tft.drawString(hbuf, W - SIDE_PADDING_PX, y);
+    tft.drawString(hbuf, W / 2, y);
   } else {
     tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
-    tft.drawString("Humidity: --%", W - SIDE_PADDING_PX, y);
+    tft.drawString("Hum: --%", W / 2, y);
+  }
+
+  // Temperature — right edge.
+  tft.setTextDatum(MR_DATUM);
+  if (g_temp_c >= 0) {
+    char tbuf[20];
+    snprintf(tbuf, sizeof(tbuf), "Temp: %.1fC", g_temp_c);
+    tft.setTextColor(TFT_CYAN, TFT_NAVY);
+    tft.drawString(tbuf, W - SIDE_PADDING_PX, y);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_NAVY);
+    tft.drawString("Temp: --C", W - SIDE_PADDING_PX, y);
   }
 }
 

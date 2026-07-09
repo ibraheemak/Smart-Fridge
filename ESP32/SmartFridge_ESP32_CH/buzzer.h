@@ -25,6 +25,10 @@ static unsigned long buzzerEndAt  = 0;   // when the whole alert ends (0 = idle)
 static unsigned long buzzerNextAt = 0;   // when to fire the next action
 static uint8_t       buzzerStep   = 0;   // which step in the beep pattern
 
+// User-toggleable via the Settings screen (see settings.h). When false the
+// door-open alert stays completely silent — buzzFor() becomes a no-op.
+bool g_buzzer_enabled = true;
+
 // Steps: 0=beep1, 1=gap, 2=beep2, 3=pause, then repeat
 void updateBuzzer() {
   if (buzzerEndAt == 0) return;
@@ -72,7 +76,9 @@ void initBuzzer() {
 }
 
 // Start the beep-beep alert for durationMs total. Safe to call repeatedly.
+// No-op when the user has muted the buzzer in Settings.
 void buzzFor(unsigned long durationMs) {
+  if (!g_buzzer_enabled) return;
   buzzerEndAt  = millis() + durationMs;
   buzzerNextAt = millis();
   buzzerStep   = 0;
