@@ -79,11 +79,12 @@
 // ----------------------------------------------------------------------------
 // BUZZER (US #10 — door-open alert)
 // ----------------------------------------------------------------------------
-// Active buzzer: HIGH = on. Wiring: buzzer+ -> GPIO 14, buzzer- -> GND.
+// Passive buzzer driven via LEDC PWM (see buzzer.h). Wiring: buzzer S -> GPIO
+// 14, buzzer- -> GND. Volume, pitch, total duration and melody are runtime
+// settings (Settings > Buzzer, persisted in NVS) — the value below is only the
+// factory default for the total alert duration.
 #define BUZZER_PIN             14
-#define BUZZER_DURATION_MS  10000     // total pulse duration (10 s)
-#define BUZZER_BEEP_ON_MS     300     // each beep ON time  (ms)
-#define BUZZER_BEEP_OFF_MS    200     // each beep OFF time (ms)
+#define BUZZER_DURATION_MS  10000     // default total alert duration (10 s)
 
 // ----------------------------------------------------------------------------
 // ESP-NOW LINK TO CAM BOARDS — sends SCAN_TRIGGER on door close

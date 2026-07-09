@@ -15,6 +15,10 @@
 // simpler to reason about outside an ISR.
 // ============================================================================
 
+// Door-open buzzer delay, in ms. Seeded from DOOR_OPEN_ALERT_MS but tunable at
+// runtime from the Settings screen (see settings.h / applySettings()).
+unsigned long g_door_open_alert_ms = DOOR_OPEN_ALERT_MS;
+
 static int           doorState     = HIGH;   // last confirmed (debounced) state
 static int           doorReading   = HIGH;   // last raw reading
 static unsigned long doorChangeMs  = 0;      // when the raw reading last changed
@@ -38,7 +42,7 @@ bool doorIsClosed() { return doorState == DOOR_CLOSED_LEVEL; }
 // Resets the timer after firing so a second alert fires if door stays open longer.
 bool doorOpenTooLong() {
   if (doorOpenSince == 0) return false;   // door is closed
-  if (millis() - doorOpenSince >= DOOR_OPEN_ALERT_MS) {
+  if (millis() - doorOpenSince >= g_door_open_alert_ms) {
     doorOpenSince = millis();             // reset — next alert in another 30 s
     return true;
   }

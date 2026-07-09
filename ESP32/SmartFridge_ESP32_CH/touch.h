@@ -51,10 +51,18 @@ void beginGM65ScanSession();
 // Cancels an in-progress scan (user tapped "< Back" on the scanning screen).
 void cancelGM65Scan();
 
+// Defined in settings.h, included after this file — handleTouch() dispatches
+// taps to the Settings screen and the environment-alert screen.
+void openSettingsScreen();
+void handleSettingsTouch(int x, int y);
+void handleAlertTouch(int x, int y);
+void openBuzzerScreen();
+void handleBuzzerTouch(int x, int y);
+
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN };
+enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_BUZZER, VIEW_ALERT };
 
 ViewState     g_view          = VIEW_HOME;
 int           g_detail_index  = -1;
@@ -521,8 +529,24 @@ void handleTouch() {
 
   Serial.printf("[TOUCH] x=%d y=%d (corrected) view=%d\n", tx, ty, g_view);
 
+  // VIEW_ALERT — CLOSE the out-of-range environment alert.
+  if (g_view == VIEW_ALERT)    { handleAlertTouch(tx, ty); return; }
+
+  // VIEW_SETTINGS — buzzer/door-alert/temp/humidity controls.
+  if (g_view == VIEW_SETTINGS) { handleSettingsTouch(tx, ty); return; }
+
+  // VIEW_BUZZER — buzzer volume/pitch/duration/melody sub-screen.
+  if (g_view == VIEW_BUZZER)   { handleBuzzerTouch(tx, ty); return; }
+
   // VIEW_HOME — large tile buttons
   if (g_view == VIEW_HOME) {
+    // Top-left "Settings" button. Touch readings are unreliable near the top
+    // edge (correctTouchY()'s linear fit is calibrated from taps much lower
+    // on the screen and overshoots up here) — mirror btnBackHit's proven
+    // generous top-left zone (0,0,160,140), used for the same reason on every
+    // other screen's "< Back" button, rather than the button's drawn rect.
+    if (tx < 160 && ty < 140) { openSettingsScreen(); return; }
+
     auto inTile = [](HomeTile t, int x, int y) {
       return x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h;
     };
