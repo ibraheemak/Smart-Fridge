@@ -136,6 +136,8 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
 #define SIDE_PADDING_PX     12
 #define MAX_ITEMS_DISPLAYED  32
 #define SCROLL_ARROW_H       28  // height of the up/down list-scroll strips
+#define SCROLL_ARROW_BOX_W   70  // width of the corner box drawn inside each
+                                  // scroll strip (rest of the strip is blank)
 
 // ----------------------------------------------------------------------------
 // TOUCH (XPT2046)

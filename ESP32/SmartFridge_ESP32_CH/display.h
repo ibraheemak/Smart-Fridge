@@ -286,7 +286,7 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
   uint8_t* jbuf = nullptr;
   size_t   jlen = 0;
   if (!fetchIconJpeg(name, &jbuf, &jlen)) {
-    tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_DARKGREY);
+    drawIconPlaceholder(name, x, y, bg);
     return;
   }
 
@@ -304,10 +304,19 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
     return;
   }
 
+  // Pick the largest power-of-2 TJpgDec scale that still leaves both
+  // dimensions >= ICON_SIZE_PX (the final on-screen size), rather than just
+  // shrinking to fit ICON_MAX_SRC_BYTES. Decoding any bigger than that just
+  // wastes a bigger sbuf malloc for no visible gain, since resampleAreaRGB565
+  // downsamples to ICON_SIZE_PX right after anyway — and on a no-PSRAM board
+  // a needlessly large contiguous malloc is exactly what fails under heap
+  // fragmentation from WiFi/TLS/RTDB-stream buffers.
   uint8_t dec_scale = 1;
   while (dec_scale < 8) {
-    if ((size_t)(jw/dec_scale) * (jh/dec_scale) * 2 <= ICON_MAX_SRC_BYTES) break;
-    dec_scale <<= 1;
+    uint8_t next = dec_scale << 1;
+    if ((int)(jw/next) < ICON_SIZE_PX || (int)(jh/next) < ICON_SIZE_PX) break;
+    if ((size_t)(jw/next) * (jh/next) * 2 > ICON_MAX_SRC_BYTES) break;
+    dec_scale = next;
   }
   int sw = jw / dec_scale, sh = jh / dec_scale;
   if (sw < ICON_SIZE_PX || sh < ICON_SIZE_PX) {
@@ -571,14 +580,22 @@ ListLayout computeListLayout() {
   return l;
 }
 
+// Reserved strip is SCROLL_ARROW_H tall across the full row width (so the
+// tap target stays easy to hit), but only a small rounded box in the
+// right-hand corner of that strip is actually drawn — the rest of the strip
+// stays plain black so it doesn't read as another full-width row.
 void drawScrollArrow(int y, bool pointingUp) {
   int w = tft.width();
-  tft.fillRect(0, y, w, SCROLL_ARROW_H, 0x2104);
-  tft.drawFastHLine(0, y, w, TFT_DARKGREY);
-  tft.drawFastHLine(0, y + SCROLL_ARROW_H - 1, w, TFT_DARKGREY);
-  int cx = w / 2, cy = y + SCROLL_ARROW_H / 2;
-  if (pointingUp) tft.fillTriangle(cx - 10, cy + 6, cx + 10, cy + 6, cx, cy - 6, TFT_LIGHTGREY);
-  else             tft.fillTriangle(cx - 10, cy - 6, cx + 10, cy - 6, cx, cy + 6, TFT_LIGHTGREY);
+  tft.fillRect(0, y, w, SCROLL_ARROW_H, TFT_BLACK);
+
+  int boxW = SCROLL_ARROW_BOX_W, boxH = SCROLL_ARROW_H - 6;
+  int bx = w - boxW - SIDE_PADDING_PX, by = y + 3;
+  tft.fillRoundRect(bx, by, boxW, boxH, 6, 0x2104);
+  tft.drawRoundRect(bx, by, boxW, boxH, 6, TFT_DARKGREY);
+
+  int cx = bx + boxW / 2, cy = by + boxH / 2;
+  if (pointingUp) tft.fillTriangle(cx - 8, cy + 5, cx + 8, cy + 5, cx, cy - 5, TFT_LIGHTGREY);
+  else             tft.fillTriangle(cx - 8, cy - 5, cx + 8, cy - 5, cx, cy + 5, TFT_LIGHTGREY);
 }
 
 void drawItemRow(int index, int y) {
