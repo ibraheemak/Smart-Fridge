@@ -56,6 +56,15 @@ static bool rtdbStreamConnect() {
   String host = (path_start < 0) ? url.substring(host_start) : url.substring(host_start, path_start);
 
   g_rtdb_client.setInsecure();
+  // Default WiFiClientSecure timeouts are far too long for something running
+  // synchronously in loop() alongside touch polling: TCP connect defaults to
+  // 30s, and the TLS handshake defaults to a full 120s (note: plain
+  // setTimeout() only bounds later stream reads, not connect()/handshake —
+  // these are the two calls that actually govern how long connect() below
+  // can block). Cap both so a stalled/bad connection attempt can't freeze
+  // the UI for minutes.
+  g_rtdb_client.setConnectionTimeout(5000);
+  g_rtdb_client.setHandshakeTimeout(5);  // seconds
   if (!g_rtdb_client.connect(host.c_str(), 443)) {
     Serial.println("[RTDB] stream connect failed");
     return false;

@@ -59,10 +59,19 @@ void handleAlertTouch(int x, int y);
 void openBuzzerScreen();
 void handleBuzzerTouch(int x, int y);
 
+// Defined in liveview.h — placeholder Live View screen (teammate to implement).
+void openLiveViewScreen();
+void handleLiveViewTouch(int x, int y);
+
+// Defined in notifications.h — alerts list + retention settings sub-screen.
+void openNotificationsScreen();
+void handleNotificationsTouch(int x, int y);
+void handleNotifSettingsTouch(int x, int y);
+
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_BUZZER, VIEW_ALERT };
+enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_BUZZER, VIEW_ALERT, VIEW_LIVE, VIEW_NOTIFICATIONS, VIEW_NOTIF_SETTINGS };
 
 ViewState     g_view          = VIEW_HOME;
 int           g_detail_index  = -1;
@@ -455,9 +464,14 @@ void persistItemsToFirestore() {
   DynamicJsonDocument doc(8192);
   JsonObject fields = doc["fields"].to<JsonObject>();
 
-  time_t now = time(nullptr);
+  // Fall back to the last known-good timestamp (from the most recent
+  // fetchInventory()) instead of stamping a bogus "1970-01-01" if the clock
+  // hasn't synced yet — this write still needs to go out (it's the actual
+  // item/expiry data), just without corrupting updatedAt.
   char ts[20];
-  strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
+  if (!formatTimestampIfSynced(ts, sizeof(ts))) {
+    g_updated_at.toCharArray(ts, sizeof(ts));
+  }
   fields["updatedAt"]["stringValue"] = ts;
   fields["source"]["stringValue"]    = "ESP32-CH";
 
@@ -566,6 +580,13 @@ void handleTouch() {
   // VIEW_BUZZER — buzzer volume/pitch/duration/melody sub-screen.
   if (g_view == VIEW_BUZZER)   { handleBuzzerTouch(tx, ty); return; }
 
+  // VIEW_LIVE — placeholder Live View screen ("< Back" only for now).
+  if (g_view == VIEW_LIVE)     { handleLiveViewTouch(tx, ty); return; }
+
+  // VIEW_NOTIFICATIONS / VIEW_NOTIF_SETTINGS — alerts list + retention config.
+  if (g_view == VIEW_NOTIFICATIONS)  { handleNotificationsTouch(tx, ty); return; }
+  if (g_view == VIEW_NOTIF_SETTINGS) { handleNotifSettingsTouch(tx, ty); return; }
+
   // VIEW_HOME — large tile buttons
   if (g_view == VIEW_HOME) {
     // Top-left "Settings" button. Touch readings are unreliable near the top
@@ -589,6 +610,10 @@ void handleTouch() {
       showStatus("Loading stats...", "");
       fetchBoughtStats();
       renderStatsScreen();
+    } else if (inTile(g_home_tiles[HOME_TILE_LIVE], tx, ty)) {
+      openLiveViewScreen();
+    } else if (inTile(g_home_tiles[HOME_TILE_NOTIF], tx, ty)) {
+      openNotificationsScreen();
     }
     return;
   }

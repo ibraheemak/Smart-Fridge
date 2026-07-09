@@ -30,6 +30,10 @@
 #include "display.h"
 #include "parameters.h"
 
+// Defined in notifications.h (included after this file). Logs an alert into the
+// persistent notifications list shown on the home "ALERTS" tile / list screen.
+void addNotification(const String& text);
+
 // ----------------------------------------------------------------------------
 // Persisted settings
 // ----------------------------------------------------------------------------
@@ -159,8 +163,11 @@ void checkEnvironmentAlert() {
   if (!oor) { g_alert_active = false; g_alert_dismissed = false; return; }
   if (g_alert_dismissed) return;   // already CLOSEd this episode
 
+  bool wasActive = g_alert_active;
   g_alert_active = true;
   g_alert_msg    = msg;
+  // Log once per alert episode (rising edge) — not on every repeat reading.
+  if (!wasActive) addNotification(msg);
 
   // Only take over an "idle" screen — never interrupt an in-progress task
   // (expiry entry, barcode scan, or editing Settings). serviceEnvironmentAlert()
