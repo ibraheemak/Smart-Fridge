@@ -34,12 +34,16 @@
 // Persisted settings
 // ----------------------------------------------------------------------------
 struct FridgeSettings {
-  bool buzzer_enabled;  // false = door-open buzzer stays silent
-  int  door_alert_s;    // seconds door may stay open before the buzzer fires
-  int  temp_min;        // acceptable temperature range (C)
+  bool buzzer_enabled;   // false = door-open buzzer stays silent
+  int  door_alert_s;     // seconds door may stay open before the buzzer fires
+  int  temp_min;         // acceptable temperature range (C)
   int  temp_max;
-  int  hum_min;         // acceptable humidity range (%)
+  int  hum_min;          // acceptable humidity range (%)
   int  hum_max;
+  int  buzzer_volume;    // 0..100 %
+  int  buzzer_freq;      // Hz (pitch)
+  int  buzzer_duration_s;// how long the whole alert sounds
+  int  buzzer_melody;    // index into MELODIES[] (buzzer.h)
 };
 
 FridgeSettings g_settings;
@@ -50,17 +54,25 @@ FridgeSettings g_settings;
 void applySettings() {
   g_buzzer_enabled     = g_settings.buzzer_enabled;
   g_door_open_alert_ms = (unsigned long)g_settings.door_alert_s * 1000UL;
+  g_buzzer_volume      = g_settings.buzzer_volume;
+  g_buzzer_freq        = g_settings.buzzer_freq;
+  g_buzzer_duration_ms = (unsigned long)g_settings.buzzer_duration_s * 1000UL;
+  g_buzzer_melody      = g_settings.buzzer_melody;
 }
 
 void loadSettings() {
   Preferences p;
   p.begin("fsettings", true);   // read-only
-  g_settings.buzzer_enabled = p.getBool("buzz", true);
-  g_settings.door_alert_s   = p.getInt("dooralert", DOOR_OPEN_ALERT_MS / 1000);
-  g_settings.temp_min       = p.getInt("tmin", 2);
-  g_settings.temp_max       = p.getInt("tmax", 8);
-  g_settings.hum_min        = p.getInt("hmin", 30);
-  g_settings.hum_max        = p.getInt("hmax", 70);
+  g_settings.buzzer_enabled    = p.getBool("buzz", true);
+  g_settings.door_alert_s      = p.getInt("dooralert", DOOR_OPEN_ALERT_MS / 1000);
+  g_settings.temp_min          = p.getInt("tmin", 2);
+  g_settings.temp_max          = p.getInt("tmax", 8);
+  g_settings.hum_min           = p.getInt("hmin", 30);
+  g_settings.hum_max           = p.getInt("hmax", 70);
+  g_settings.buzzer_volume     = p.getInt("bvol", 80);
+  g_settings.buzzer_freq       = p.getInt("bfreq", 2000);
+  g_settings.buzzer_duration_s = p.getInt("bdur", BUZZER_DURATION_MS / 1000);
+  g_settings.buzzer_melody     = p.getInt("bmel", 0);
   p.end();
 }
 
@@ -73,6 +85,10 @@ void saveSettings() {
   p.putInt("tmax",       g_settings.temp_max);
   p.putInt("hmin",       g_settings.hum_min);
   p.putInt("hmax",       g_settings.hum_max);
+  p.putInt("bvol",       g_settings.buzzer_volume);
+  p.putInt("bfreq",      g_settings.buzzer_freq);
+  p.putInt("bdur",       g_settings.buzzer_duration_s);
+  p.putInt("bmel",       g_settings.buzzer_melody);
   p.end();
 }
 
@@ -220,11 +236,9 @@ void drawSetValue(int row, const String& s) {
   tft.drawString(s, SET_VAL_X0 + SET_VAL_W / 2, y);
 }
 
-// Redraws only the mutable value fields (and the buzzer toggle) — used after a
-// +/- tap so the labels and fixed buttons don't flash.
+// Redraws only the mutable value fields — used after a +/- tap so the labels
+// and fixed buttons don't flash. (Row 0's "Options" button is static.)
 void drawSettingsValues() {
-  drawBtn(btnSetBuzzer, g_settings.buzzer_enabled ? "ON" : "OFF",
-          g_settings.buzzer_enabled ? TFT_DARKGREEN : 0x6000 /* dark red */);
   drawSetValue(1, String(g_settings.door_alert_s) + "s");
   drawSetValue(2, String(g_settings.temp_min) + "C");
   drawSetValue(3, String(g_settings.temp_max) + "C");
@@ -249,13 +263,16 @@ void renderSettingsScreen() {
   layoutSettings();
 
   const char* labels[6] = {
-    "Buzzer sound", "Door alert", "Temp min", "Temp max", "Humidity min", "Humidity max"
+    "Buzzer", "Door alert", "Temp min", "Temp max", "Humidity min", "Humidity max"
   };
   tft.setTextDatum(ML_DATUM);
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   for (int i = 0; i < 6; i++)
     tft.drawString(labels[i], SIDE_PADDING_PX, setRowY(i) + 2 + SET_BTN_H / 2);
+
+  // Row 0 opens the buzzer sub-screen (volume/pitch/duration/melody).
+  drawBtn(btnSetBuzzer, "Options >", TFT_NAVY);
 
   drawBtn(btnDoorM, "-", TFT_DARKGREY); drawBtn(btnDoorP, "+", TFT_DARKGREY);
   drawBtn(btnTMinM, "-", TFT_DARKGREY); drawBtn(btnTMinP, "+", TFT_DARKGREY);
@@ -282,9 +299,11 @@ void handleSettingsTouch(int x, int y) {
     return;
   }
 
+  // Row 0 "Options >" opens the buzzer sub-screen.
+  if (inBtn(btnSetBuzzer, x, y)) { openBuzzerScreen(); return; }
+
   bool changed = false;
-  if      (inBtn(btnSetBuzzer, x, y)) { g_settings.buzzer_enabled = !g_settings.buzzer_enabled; changed = true; }
-  else if (inBtn(btnDoorM, x, y)) { g_settings.door_alert_s = max(5,   g_settings.door_alert_s - 5); changed = true; }
+  if      (inBtn(btnDoorM, x, y)) { g_settings.door_alert_s = max(5,   g_settings.door_alert_s - 5); changed = true; }
   else if (inBtn(btnDoorP, x, y)) { g_settings.door_alert_s = min(300, g_settings.door_alert_s + 5); changed = true; }
   else if (inBtn(btnTMinM, x, y)) { g_settings.temp_min = max(-20, g_settings.temp_min - 1); changed = true; }
   else if (inBtn(btnTMinP, x, y)) { g_settings.temp_min = min(g_settings.temp_max - 1, g_settings.temp_min + 1); changed = true; }
@@ -298,5 +317,106 @@ void handleSettingsTouch(int x, int y) {
   if (changed) {
     applySettings();           // live-apply buzzer/door values; NVS write deferred to Back
     drawSettingsValues();
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Buzzer sub-screen (VIEW_BUZZER) — volume / pitch / duration / melody + Test
+// ----------------------------------------------------------------------------
+BtnRect btnBuzzSound, btnVolM, btnVolP, btnFreqM, btnFreqP;
+BtnRect btnDurM, btnDurP, btnMelM, btnMelP, btnBuzzTest;
+
+void layoutBuzzer() {
+  int y0 = setRowY(0) + 2, y1 = setRowY(1) + 2, y2 = setRowY(2) + 2;
+  int y3 = setRowY(3) + 2, y4 = setRowY(4) + 2, y5 = setRowY(5) + 2;
+
+  btnBuzzSound = {SET_MINUS_X, y0, 150, SET_BTN_H};
+  btnVolM  = {SET_MINUS_X, y1, SET_BTN_W, SET_BTN_H}; btnVolP  = {SET_PLUS_X, y1, SET_BTN_W, SET_BTN_H};
+  btnFreqM = {SET_MINUS_X, y2, SET_BTN_W, SET_BTN_H}; btnFreqP = {SET_PLUS_X, y2, SET_BTN_W, SET_BTN_H};
+  btnDurM  = {SET_MINUS_X, y3, SET_BTN_W, SET_BTN_H}; btnDurP  = {SET_PLUS_X, y3, SET_BTN_W, SET_BTN_H};
+  btnMelM  = {SET_MINUS_X, y4, SET_BTN_W, SET_BTN_H}; btnMelP  = {SET_PLUS_X, y4, SET_BTN_W, SET_BTN_H};
+  btnBuzzTest = {SET_MINUS_X, y5, 150, SET_BTN_H};
+}
+
+void drawBuzzerValues() {
+  drawBtn(btnBuzzSound, g_settings.buzzer_enabled ? "ON" : "OFF",
+          g_settings.buzzer_enabled ? TFT_DARKGREEN : 0x6000 /* dark red */);
+  drawSetValue(1, String(g_settings.buzzer_volume) + "%");
+  drawSetValue(2, String(g_settings.buzzer_freq));
+  drawSetValue(3, String(g_settings.buzzer_duration_s) + "s");
+
+  // Melody name doesn't fit the value box at text size 2 — draw it smaller.
+  int y = setRowY(4) + 2 + SET_BTN_H / 2;
+  tft.fillRect(SET_VAL_X0, setRowY(4) + 2, SET_VAL_W, SET_BTN_H, TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(buzzerMelodyName(), SET_VAL_X0 + SET_VAL_W / 2, y);
+}
+
+void renderBuzzerScreen() {
+  tft.fillScreen(TFT_BLACK);
+  int w = tft.width();
+
+  tft.fillRect(0, 0, w, HEADER_HEIGHT_PX, TFT_NAVY);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.setTextSize(2);
+  tft.drawString("Buzzer", w / 2, HEADER_HEIGHT_PX / 2);
+
+  layoutDetailButtons();
+  drawBtn(btnBack, "< Back", TFT_DARKGREY);
+
+  layoutBuzzer();
+
+  const char* labels[6] = { "Sound", "Volume", "Tone Hz", "Duration", "Melody", "Preview" };
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  for (int i = 0; i < 6; i++)
+    tft.drawString(labels[i], SIDE_PADDING_PX, setRowY(i) + 2 + SET_BTN_H / 2);
+
+  drawBtn(btnVolM,  "-", TFT_DARKGREY); drawBtn(btnVolP,  "+", TFT_DARKGREY);
+  drawBtn(btnFreqM, "-", TFT_DARKGREY); drawBtn(btnFreqP, "+", TFT_DARKGREY);
+  drawBtn(btnDurM,  "-", TFT_DARKGREY); drawBtn(btnDurP,  "+", TFT_DARKGREY);
+  drawBtn(btnMelM,  "-", TFT_DARKGREY); drawBtn(btnMelP,  "+", TFT_DARKGREY);
+  drawBtn(btnBuzzTest, "TEST", TFT_DARKGREEN);
+
+  drawBuzzerValues();
+}
+
+void openBuzzerScreen() {
+  g_view = VIEW_BUZZER;
+  renderBuzzerScreen();
+}
+
+void handleBuzzerTouch(int x, int y) {
+  // Back returns to the main Settings screen (persisting first).
+  if (inBtn(btnBackHit, x, y)) {
+    saveSettings();
+    g_view = VIEW_SETTINGS;
+    renderSettingsScreen();
+    return;
+  }
+
+  bool changed = false;
+  if      (inBtn(btnBuzzSound, x, y)) { g_settings.buzzer_enabled = !g_settings.buzzer_enabled; changed = true; }
+  else if (inBtn(btnVolM, x, y))  { g_settings.buzzer_volume = max(0,   g_settings.buzzer_volume - 10); changed = true; }
+  else if (inBtn(btnVolP, x, y))  { g_settings.buzzer_volume = min(100, g_settings.buzzer_volume + 10); changed = true; }
+  else if (inBtn(btnFreqM, x, y)) { g_settings.buzzer_freq = max(500,  g_settings.buzzer_freq - 100); changed = true; }
+  else if (inBtn(btnFreqP, x, y)) { g_settings.buzzer_freq = min(4000, g_settings.buzzer_freq + 100); changed = true; }
+  else if (inBtn(btnDurM, x, y))  { g_settings.buzzer_duration_s = max(2,  g_settings.buzzer_duration_s - 2); changed = true; }
+  else if (inBtn(btnDurP, x, y))  { g_settings.buzzer_duration_s = min(60, g_settings.buzzer_duration_s + 2); changed = true; }
+  else if (inBtn(btnMelM, x, y))  { g_settings.buzzer_melody = (g_settings.buzzer_melody + MELODY_COUNT - 1) % MELODY_COUNT; changed = true; }
+  else if (inBtn(btnMelP, x, y))  { g_settings.buzzer_melody = (g_settings.buzzer_melody + 1) % MELODY_COUNT; changed = true; }
+  else if (inBtn(btnBuzzTest, x, y)) {
+    applySettings();
+    buzzFor(2500, true);   // force = preview even while muted
+    return;
+  }
+
+  if (changed) {
+    applySettings();       // live-apply so the next Test uses the new value
+    drawBuzzerValues();
   }
 }

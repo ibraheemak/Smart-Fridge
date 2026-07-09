@@ -42,11 +42,13 @@ void cancelGM65Scan();
 void openSettingsScreen();
 void handleSettingsTouch(int x, int y);
 void handleAlertTouch(int x, int y);
+void openBuzzerScreen();
+void handleBuzzerTouch(int x, int y);
 
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_ALERT };
+enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_BUZZER, VIEW_ALERT };
 
 ViewState     g_view          = VIEW_HOME;
 int           g_detail_index  = -1;
@@ -518,6 +520,9 @@ void handleTouch() {
 
   // VIEW_SETTINGS — buzzer/door-alert/temp/humidity controls.
   if (g_view == VIEW_SETTINGS) { handleSettingsTouch(tx, ty); return; }
+
+  // VIEW_BUZZER — buzzer volume/pitch/duration/melody sub-screen.
+  if (g_view == VIEW_BUZZER)   { handleBuzzerTouch(tx, ty); return; }
 
   // VIEW_HOME — large tile buttons
   if (g_view == VIEW_HOME) {
