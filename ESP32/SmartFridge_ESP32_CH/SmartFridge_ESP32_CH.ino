@@ -377,27 +377,11 @@ void loop() {
     }
   }
 
-  // Redraw the home-screen clock every second without a full re-render.
+  // Redraw just the home-screen clock every second — the date next to it
+  // doesn't change second-to-second, see updateHomeFooterClock() in display.h.
   if (g_view == VIEW_HOME && millis() - g_last_clock_ms >= 1000) {
     g_last_clock_ms = millis();
-    int W = tft.width(), H = tft.height();
-    const int FTR = 36;
-    int fy = H - FTR;
-
-    time_t now_t = time(nullptr);
-    struct tm* tm_info = localtime(&now_t);
-    char date_buf[32], time_buf[12];
-    strftime(date_buf, sizeof(date_buf), "%A, %d %b %Y", tm_info);
-    strftime(time_buf, sizeof(time_buf),  "%H:%M:%S",      tm_info);
-
-    tft.fillRect(0, fy, W, FTR, 0x1082);
-    tft.setTextDatum(ML_DATUM);
-    tft.setTextColor(TFT_LIGHTGREY, 0x1082);
-    tft.setTextSize(1);
-    tft.drawString(date_buf, SIDE_PADDING_PX, fy + FTR / 2);
-    tft.setTextDatum(MR_DATUM);
-    tft.setTextColor(TFT_WHITE, 0x1082);
-    tft.drawString(time_buf, W - SIDE_PADDING_PX, fy + FTR / 2);
+    updateHomeFooterClock();
   }
 
   handleTouch();
