@@ -439,6 +439,12 @@ void loop() {
   handleTouch();
   pollGM65();
 
+  // Camera finished its scan — now safe to process any barcode held back for
+  // camera priority (see cameraScanBegin() below / gm65.h).
+  if (cameraScanJustFinished()) {
+    serviceDeferredBarcodes();
+  }
+
   if (doorJustClosed()) {
     Serial.println("[DOOR] Closed — triggering CAM scan");
     // Keep buzzer updated during the settle wait so it doesn't overshoot.
@@ -448,6 +454,7 @@ void loop() {
       delay(50);
     }
     espnowSendScanTrigger();
+    cameraScanBegin();   // give the camera priority — hold barcode scans until it's done
     saveDoorState(true);
   }
   if (doorJustOpened()) {

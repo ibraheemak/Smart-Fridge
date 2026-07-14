@@ -47,6 +47,16 @@ static volatile float g_espnow_temp_c       = -1.0f;
 static volatile float g_espnow_humidity     = -1.0f;
 
 // ----------------------------------------------------------------------------
+// Scan-done receive — each CAM board sends "SCAN_DONE" once it finishes its
+// whole scan pipeline (see espnowSendScanDone() on the CAM board). Counted
+// here (not a simple flag) because a door-close trigger fans out to all
+// NUM_ROOFS cameras, so the CH board waits for that many done signals before
+// deciding the camera work is over. Incremented on the WiFi/LWIP task; drained
+// from loop() via cameraScanJustFinished() below.
+// ----------------------------------------------------------------------------
+static volatile uint8_t g_espnow_scan_done_count = 0;
+
+// ----------------------------------------------------------------------------
 // Live View — CAM boards reply to a "LIVE_CAPTURE" request with a JPEG
 // snapshot, split into chunks small enough for a single ESP-NOW packet
 // (legacy ESP-NOW payload limit is ~250 bytes). Chunks are disambiguated from
@@ -127,6 +137,11 @@ void onLiveViewChunk(const uint8_t *data, int len) {
 void onEspNowDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len >= 1 && data[0] == LIVEVIEW_CHUNK_MAGIC) { onLiveViewChunk(data, len); return; }
 
+  if (len == (int)strlen("SCAN_DONE") && memcmp(data, "SCAN_DONE", len) == 0) {
+    g_espnow_scan_done_count++;
+    return;
+  }
+
   if (len < 5 || memcmp(data, "TEMP:", 5) != 0) return;
 
   char buf[32];
@@ -172,6 +187,59 @@ bool espnowTemperatureReceived(float &tempC, float &humidity) {
   tempC = g_espnow_temp_c;
   humidity = g_espnow_humidity;
   return true;
+}
+
+// ----------------------------------------------------------------------------
+// Camera-priority scan gating.
+//
+// The camera gets priority over GM65 barcode scans: from the moment a
+// door-close SCAN_TRIGGER is sent until every roof reports SCAN_DONE (or a
+// safety timeout elapses), any barcode scanned on this board is held back and
+// processed only once the camera's whole pipeline has finished — so the two
+// never race each other's full-document writes to inventory/current.
+//
+// A safety timeout backstops the SCAN_DONE signal: if a CAM board is offline
+// or crashes mid-scan and never reports done, the queue would otherwise stay
+// blocked forever. Generous enough to cover a slow capture + Gemini round-trip
+// on a bad connection.
+#define CAMERA_SCAN_TIMEOUT_MS 20000
+
+static bool          g_camera_scan_busy          = false;
+static unsigned long g_camera_scan_started_ms    = 0;
+static uint8_t       g_camera_scan_pending_roofs = 0;
+
+// Call right after espnowSendScanTrigger() — marks the camera busy and expects
+// one SCAN_DONE back from each roof. Clears any stale done-count left over from
+// a previous cycle that timed out before every roof reported in.
+void cameraScanBegin() {
+  g_espnow_scan_done_count    = 0;
+  g_camera_scan_busy          = true;
+  g_camera_scan_started_ms    = millis();
+  g_camera_scan_pending_roofs = NUM_ROOFS;
+}
+
+bool cameraScanInProgress() { return g_camera_scan_busy; }
+
+// Poll every loop(). Consumes SCAN_DONE signals as they arrive and returns
+// true exactly once, at the moment the camera transitions busy -> free (all
+// roofs reported, or the safety timeout elapsed).
+bool cameraScanJustFinished() {
+  if (!g_camera_scan_busy) return false;
+
+  uint8_t done = g_espnow_scan_done_count;
+  if (done > 0) {
+    g_espnow_scan_done_count = 0;
+    if (done >= g_camera_scan_pending_roofs) g_camera_scan_pending_roofs = 0;
+    else                                     g_camera_scan_pending_roofs -= done;
+  }
+
+  bool finished = (g_camera_scan_pending_roofs == 0) ||
+                  (millis() - g_camera_scan_started_ms >= CAMERA_SCAN_TIMEOUT_MS);
+  if (finished) {
+    g_camera_scan_busy = false;
+    return true;
+  }
+  return false;
 }
 
 void initEspNowLink() {
