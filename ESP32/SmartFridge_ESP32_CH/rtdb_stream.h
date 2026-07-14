@@ -8,15 +8,21 @@
 // "Accept: text/event-stream". RTDB pushes an "event: put" / "data: ..."
 // frame the instant that value changes (bumped by rtdb_notify.h whenever
 // Firestore inventory data is written), plus periodic "event: keep-alive"
-// frames while nothing changes. rtdbStreamPoll() is non-blocking and must be
-// called every loop() iteration; it returns true exactly once per genuine
+// frames while nothing changes.
+//
+// The connect+read loop runs on its own FreeRTOS task pinned to core 0
+// (Arduino loop() runs on core 1) instead of inline in loop(), because
+// WiFiClientSecure::connect() is a genuinely blocking call — TCP connect
+// plus TLS handshake can take seconds, and a failed/unreachable RTDB host
+// used to block loop() (and therefore handleTouch()) for that long on every
+// retry, which made the touchscreen appear dead whenever "[RTDB] stream
+// connect failed" was being logged. Running it on its own task means it can
+// block as long as it wants without ever stalling touch polling.
+//
+// rtdbStreamPoll() is called every loop() iteration; it's just a non-blocking
+// check of a flag the task sets, and returns true exactly once per genuine
 // change, telling the caller to re-fetch Firestore right now instead of
 // waiting on a timer.
-//
-// This is the only "connection" this board keeps open across loop()
-// iterations — every other Firestore call in this codebase opens/closes a
-// short-lived WiFiClientSecure per request, so the client here is
-// deliberately file-scope instead of a local like those.
 // ============================================================================
 
 #include <WiFiClientSecure.h>
@@ -26,17 +32,23 @@
 #define RTDB_STREAM_RETRY_MS   5000   // how often to retry connecting while down
 #define RTDB_STREAM_TIMEOUT_MS 60000  // no bytes at all for this long -> assume dead
 
-static WiFiClientSecure g_rtdb_client;
-static bool             g_rtdb_connected     = false;
-static unsigned long    g_rtdb_last_retry_ms = 0;
-static unsigned long    g_rtdb_last_rx_ms    = 0;
-static String           g_rtdb_line_buf;
-static String           g_rtdb_last_event;      // most recent "event:" line seen
-static String           g_rtdb_last_value;      // last "data:" payload we actually acted on
+static WiFiClientSecure     g_rtdb_client;
+static bool                 g_rtdb_connected     = false;
+static unsigned long        g_rtdb_last_retry_ms = 0;
+static unsigned long        g_rtdb_last_rx_ms    = 0;
+static String               g_rtdb_line_buf;
+static String               g_rtdb_last_event;      // most recent "event:" line seen
+static String               g_rtdb_last_value;      // last "data:" payload we actually acted on
+static volatile bool        g_rtdb_change_flag  = false;  // set by the task, drained by rtdbStreamPoll()
+static TaskHandle_t         g_rtdb_task_handle  = nullptr;
+
+static void rtdbStreamTask(void* pvParameters);
 
 void initRtdbStream() {
   g_rtdb_connected = false;
-  g_rtdb_last_retry_ms = 0;  // let the first loop() iteration connect immediately
+  g_rtdb_last_retry_ms = 0;  // let the task's first pass connect immediately
+  xTaskCreatePinnedToCore(rtdbStreamTask, "rtdb_stream", 10240, nullptr, 1,
+                          &g_rtdb_task_handle, 0);
 }
 
 static void rtdbStreamDisconnect() {
@@ -107,46 +119,64 @@ static bool rtdbHandleLine(const String& line) {
   return true;
 }
 
+// Runs entirely on its own task/core — free to block on connect()/TLS
+// handshake without ever stalling loop() or touch polling.
+static void rtdbStreamTask(void* pvParameters) {
+  for (;;) {
+    if (WiFi.status() != WL_CONNECTED) {
+      if (g_rtdb_connected) rtdbStreamDisconnect();
+      vTaskDelay(pdMS_TO_TICKS(200));
+      continue;
+    }
+
+    if (!g_rtdb_connected) {
+      if (millis() - g_rtdb_last_retry_ms < RTDB_STREAM_RETRY_MS) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        continue;
+      }
+      g_rtdb_last_retry_ms = millis();
+      if (!rtdbStreamConnect()) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        continue;
+      }
+      g_rtdb_connected = true;
+      g_rtdb_last_rx_ms = millis();
+      continue;
+    }
+
+    if (!g_rtdb_client.connected()) {
+      Serial.println("[RTDB] stream dropped — will reconnect");
+      rtdbStreamDisconnect();
+      continue;
+    }
+
+    if (millis() - g_rtdb_last_rx_ms > RTDB_STREAM_TIMEOUT_MS) {
+      Serial.println("[RTDB] stream stalled (no data/keep-alive) — reconnecting");
+      rtdbStreamDisconnect();
+      continue;
+    }
+
+    bool changed = false;
+    while (g_rtdb_client.available()) {
+      char c = g_rtdb_client.read();
+      if (c == '\n') {
+        String line = g_rtdb_line_buf;
+        g_rtdb_line_buf = "";
+        if (line.endsWith("\r")) line.remove(line.length() - 1);
+        if (rtdbHandleLine(line)) changed = true;
+      } else {
+        g_rtdb_line_buf += c;
+      }
+    }
+    if (changed) g_rtdb_change_flag = true;
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
 // Non-blocking. Returns true exactly once per genuine inventory-changed event.
 bool rtdbStreamPoll() {
-  if (WiFi.status() != WL_CONNECTED) {
-    if (g_rtdb_connected) rtdbStreamDisconnect();
-    return false;
-  }
-
-  if (!g_rtdb_connected) {
-    if (millis() - g_rtdb_last_retry_ms < RTDB_STREAM_RETRY_MS) return false;
-    g_rtdb_last_retry_ms = millis();
-    if (!rtdbStreamConnect()) return false;
-    g_rtdb_connected = true;
-    g_rtdb_last_rx_ms = millis();
-    return false;
-  }
-
-  if (!g_rtdb_client.connected()) {
-    Serial.println("[RTDB] stream dropped — will reconnect");
-    rtdbStreamDisconnect();
-    return false;
-  }
-
-  if (millis() - g_rtdb_last_rx_ms > RTDB_STREAM_TIMEOUT_MS) {
-    Serial.println("[RTDB] stream stalled (no data/keep-alive) — reconnecting");
-    rtdbStreamDisconnect();
-    return false;
-  }
-
-  bool changed = false;
-  while (g_rtdb_client.available()) {
-    char c = g_rtdb_client.read();
-    if (c == '\n') {
-      String line = g_rtdb_line_buf;
-      g_rtdb_line_buf = "";
-      if (line.endsWith("\r")) line.remove(line.length() - 1);
-      if (rtdbHandleLine(line)) changed = true;
-    } else {
-      g_rtdb_line_buf += c;
-    }
-  }
-
-  return changed;
+  if (!g_rtdb_change_flag) return false;
+  g_rtdb_change_flag = false;
+  return true;
 }
