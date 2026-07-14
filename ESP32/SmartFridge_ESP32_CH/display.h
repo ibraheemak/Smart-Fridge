@@ -11,6 +11,8 @@
 #include <TJpg_Decoder.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <FS.h>
+#include <SPIFFS.h>
 
 #include "parameters.h"
 #include "SECRETS.h"
@@ -46,12 +48,24 @@ int g_list_scroll = 0;
 // ============================================================================
 // Hebrew product name rendering
 //
-// TFT_eSPI's built-in fonts have no Hebrew glyphs, so a Hebrew name would
-// just render blank. Rather than embedding a Unicode font (which blew past
-// the flash partition size), Hebrew names show a placeholder on the TFT —
-// the real name is still stored correctly in Firestore and shown as-is in
-// the phone app.
+// TFT_eSPI's built-in bitmap fonts have no Hebrew glyphs. Embedding a
+// Hebrew-only smooth ("VLW") font as a C array in flash previously blew
+// past the program partition size, so instead the font is loaded on demand
+// from SPIFFS (data/NotoSansHebrew-Regular18.vlw, uploaded separately via
+// the ESP32 filesystem-upload tool — it lives in the SPIFFS partition, not
+// program flash). If SPIFFS isn't mounted or the font file is missing,
+// Hebrew names fall back to a placeholder — the real name is still stored
+// correctly in Firestore and shown as-is in the phone app either way.
 // ============================================================================
+
+#define HEBREW_FONT_NAME "NotoSansHebrew-Regular18"
+
+bool g_spiffsReady = false;
+
+void initHebrewFont() {
+  g_spiffsReady = SPIFFS.begin(true);
+  if (!g_spiffsReady) Serial.println("[FONT] SPIFFS mount failed - Hebrew names will show placeholder");
+}
 
 // True if the UTF-8 string contains a Hebrew-block codepoint (U+0590-05FF),
 // i.e. a lead byte of 0xD6 or 0xD7 followed by a UTF-8 continuation byte.
@@ -73,13 +87,79 @@ String truncateItemName(const String& name) {
   return name.substring(0, ITEM_NAME_MAX_CHARS) + "...";
 }
 
-// Drop-in replacement for tft.drawString(name, x, y) — shows a placeholder
-// for Hebrew names (no glyphs available on this display) instead of
-// drawing the raw text, which would render blank/garbage. Long names are
-// capped at ITEM_NAME_MAX_CHARS with "..." so they never overlap whatever
-// is drawn to their right (e.g. the quantity/count text).
-void drawItemName(const String& name, int x, int y) {
+// Number of UTF-8 codepoints (not bytes) in a string — Hebrew letters are
+// 2 bytes each, so byte-length truncation would cut a codepoint in half.
+int utf8CodepointCount(const String& s) {
+  int n = 0;
+  for (size_t i = 0; i < s.length(); n++) {
+    uint8_t c = s[i];
+    i += (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+  }
+  return n;
+}
+
+// First maxCodepoints codepoints of a UTF-8 string, byte-safe.
+String utf8TruncateCodepoints(const String& s, int maxCodepoints) {
+  int n = 0;
+  size_t i = 0;
+  while (i < s.length() && n < maxCodepoints) {
+    uint8_t c = s[i];
+    i += (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+    n++;
+  }
+  return s.substring(0, i);
+}
+
+// Reverses codepoint (not byte) order. Hebrew is stored/typed in logical
+// (right-to-left reading) order, but drawString always draws left-to-right,
+// so without this the word would render back-to-front. Fine for plain
+// Hebrew text (no bidi mixing with digits/Latin, no letter-joining like
+// Arabic), which is all product names are.
+String reverseUtf8Codepoints(const String& s) {
+  String parts[ITEM_NAME_MAX_CHARS + 4];
+  int count = 0;
+  size_t i = 0;
+  while (i < s.length() && count < ITEM_NAME_MAX_CHARS + 4) {
+    uint8_t c = s[i];
+    size_t len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+    parts[count++] = s.substring(i, i + len);
+    i += len;
+  }
+  String out;
+  for (int k = count - 1; k >= 0; k--) out += parts[k];
+  return out;
+}
+
+// Drop-in replacement for tft.drawString(name, x, y). Hebrew names are
+// rendered with the Hebrew smooth font loaded from SPIFFS (reversed into
+// visual RTL order first); if that font isn't available, falls back to a
+// placeholder instead of drawing raw bytes, which would render blank/garbage.
+//
+// maxWidthPx bounds Hebrew names by measured pixel width rather than a fixed
+// character count: the smooth font's glyphs are much wider per-character
+// than the classic bitmap font ITEM_NAME_MAX_CHARS was tuned for, so a fixed
+// character cap still overran into whatever is drawn to the name's right
+// (quantity/count text) for long Hebrew names. Pass 0 to skip width-fitting
+// (falls back to the character-count cap, same as the non-Hebrew path).
+void drawItemName(const String& name, int x, int y, int maxWidthPx = 0) {
   if (containsHebrew(name)) {
+    if (g_spiffsReady) {
+      tft.loadFont(HEBREW_FONT_NAME, SPIFFS);
+      int keep = min(utf8CodepointCount(name), ITEM_NAME_MAX_CHARS);
+      bool truncated = keep < utf8CodepointCount(name);
+      String rtl;
+      while (true) {
+        String shown = utf8TruncateCodepoints(name, keep);
+        rtl = reverseUtf8Codepoints(shown);
+        if (truncated) rtl = "..." + rtl;
+        if (maxWidthPx <= 0 || tft.textWidth(rtl) <= maxWidthPx || keep <= 0) break;
+        keep--;
+        truncated = true;
+      }
+      tft.drawString(rtl, x, y);
+      tft.unloadFont();
+      return;
+    }
     tft.drawString(truncateItemName("Hebrew name item - see in the phone app"), x, y);
     return;
   }
@@ -678,7 +758,7 @@ void drawItemRow(int index, int y) {
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_WHITE, bg);
   tft.setTextSize(2);
-  drawItemName(g_items[index].name, text_x, text_cy);
+  drawItemName(g_items[index].name, text_x, text_cy, text_right - text_x);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(TFT_CYAN, bg);
   tft.drawString(g_items[index].quantity, text_right, text_cy);

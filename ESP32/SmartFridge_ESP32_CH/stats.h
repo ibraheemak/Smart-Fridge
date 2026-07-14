@@ -217,7 +217,7 @@ void renderStatsScreen() {
     tft.setTextDatum(ML_DATUM);
     tft.setTextColor(TFT_BLACK, color);
     tft.setTextSize(1);
-    tft.drawString(truncateItemName(g_bought[idx].name), bar_x + 10, y + STATS_ROW_H / 2);
+    drawItemName(g_bought[idx].name, bar_x + 10, y + STATS_ROW_H / 2, bar_w - 20);
 
     // Count badge to the right of the bar.
     String count_str = String(g_bought[idx].count) + "x";

@@ -299,6 +299,7 @@ void setup() {
   tft.setRotation(DISPLAY_ROTATION);
   tft.fillScreen(TFT_BLACK);
   TJpgDec.setSwapBytes(true);
+  initHebrewFont();
 
   showStatus("Smart Fridge", "Booting...");
   initTouch();
