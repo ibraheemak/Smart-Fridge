@@ -16,10 +16,15 @@
 // ============================================================================
 
 static volatile bool g_espnow_scan_trigger_pending = false;
+static volatile bool g_espnow_liveview_pending     = false;
 
 void onEspNowDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len == (int)strlen("SCAN_TRIGGER") && memcmp(data, "SCAN_TRIGGER", len) == 0) {
     g_espnow_scan_trigger_pending = true;
+    return;
+  }
+  if (len == (int)strlen("LIVE_CAPTURE") && memcmp(data, "LIVE_CAPTURE", len) == 0) {
+    g_espnow_liveview_pending = true;
   }
 }
 
@@ -33,7 +38,10 @@ void initEspNowLink() {
 
   esp_now_register_recv_cb(onEspNowDataRecv);
 
-#if CAMERA_ROOF == 1
+  // Every roof needs a return path to the CH board now (Live View snapshots
+  // come back from whichever roof was asked), not just roof1 — roof1 is
+  // only special in that it *also* pushes DHT11 temperature (see
+  // espnowSendTemperature() below, still #if CAMERA_ROOF == 1 guarded).
   esp_now_peer_info_t ch_peer = {};
   memcpy(ch_peer.peer_addr, CH_MAC_ADDR, 6);
   ch_peer.channel = 0;   // track whatever channel the radio is currently on
@@ -41,7 +49,6 @@ void initEspNowLink() {
   if (!esp_now_is_peer_exist(CH_MAC_ADDR)) {
     esp_now_add_peer(&ch_peer);
   }
-#endif
 
   Serial.printf("[ESPNOW] link ready — listening (channel %d)\n", ESPNOW_CHANNEL);
 }
@@ -62,6 +69,52 @@ bool espnowScanTriggerReceived() {
   if (!g_espnow_scan_trigger_pending) return false;
   g_espnow_scan_trigger_pending = false;
   return true;
+}
+
+// Returns true exactly once when a LIVE_CAPTURE command arrives.
+bool espnowLiveViewRequested() {
+  if (!g_espnow_liveview_pending) return false;
+  g_espnow_liveview_pending = false;
+  return true;
+}
+
+// ----------------------------------------------------------------------------
+// Live View — sends a captured JPEG back to the CH board as a sequence of
+// small chunks (see LiveViewChunkHdr on the CH board's espnow_link.h for the
+// full protocol rationale: legacy ESP-NOW payload is ~250 bytes, so a frame
+// that's tens of KB has to be split). Layout here must match the CH side
+// exactly, byte for byte.
+// ----------------------------------------------------------------------------
+#pragma pack(push, 1)
+struct LiveViewChunkHdr {
+  uint8_t  magic;
+  uint8_t  roof;
+  uint16_t chunkIndex;
+  uint16_t totalChunks;
+  uint16_t totalSize;
+};
+#pragma pack(pop)
+
+#define LIVEVIEW_CHUNK_MAGIC    0x01
+#define LIVEVIEW_CHUNK_PAYLOAD  200
+#define LIVEVIEW_SEND_DELAY_MS   12   // pacing between sends so ESP-NOW's TX queue doesn't overrun
+
+void espnowSendLiveViewFrame(const uint8_t* jpeg, size_t len) {
+  uint16_t totalChunks = (len + LIVEVIEW_CHUNK_PAYLOAD - 1) / LIVEVIEW_CHUNK_PAYLOAD;
+  uint8_t packet[sizeof(LiveViewChunkHdr) + LIVEVIEW_CHUNK_PAYLOAD];
+
+  for (uint16_t i = 0; i < totalChunks; i++) {
+    size_t offset = (size_t)i * LIVEVIEW_CHUNK_PAYLOAD;
+    size_t chunkLen = min((size_t)LIVEVIEW_CHUNK_PAYLOAD, len - offset);
+
+    LiveViewChunkHdr hdr = { LIVEVIEW_CHUNK_MAGIC, (uint8_t)CAMERA_ROOF, i, totalChunks, (uint16_t)len };
+    memcpy(packet, &hdr, sizeof(hdr));
+    memcpy(packet + sizeof(hdr), jpeg + offset, chunkLen);
+
+    esp_now_send(CH_MAC_ADDR, packet, sizeof(hdr) + chunkLen);
+    delay(LIVEVIEW_SEND_DELAY_MS);
+  }
+  Serial.printf("[ESPNOW] >> live view frame sent (%d bytes, %d chunks)\n", (int)len, totalChunks);
 }
 
 #if CAMERA_ROOF == 1

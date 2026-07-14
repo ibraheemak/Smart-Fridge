@@ -25,9 +25,23 @@
 #include "rtdb_notify.h"
 
 // Defined in stats.h, included after this file — forward-declared here since
-// handleTouch() needs to trigger the stats screen on tap.
+// handleTouch() needs to trigger the stats screen on tap and page its
+// up/down scroll buttons.
 bool fetchBoughtStats();
 void renderStatsScreen();
+struct StatsLayout {
+  int  top, bottom;
+  bool show_up;
+  int  up_y;
+  int  rows_y0;
+  int  rows_visible;
+  bool show_down;
+  int  down_y;
+  int  page_step;
+};
+StatsLayout computeStatsLayout();
+extern int g_bought_count;
+extern int g_stats_scroll;
 
 // Defined in gm65.h, included after this file — forward-declared here since
 // handleTouch() needs to arm a barcode scan on tap of the footer "Scan" button.
@@ -145,6 +159,7 @@ BtnRect btnBackHit;    // larger invisible touch zone (top-left edge is inaccura
 BtnRect btnDayMinus, btnDayPlus, btnMonMinus, btnMonPlus, btnYearMinus, btnYearPlus;
 BtnRect btnSave;
 BtnRect btnEnterExpiry, btnSkip;  // VIEW_NEW_ITEM notification screen
+BtnRect btnUnitPrev, btnUnitNext; // VIEW_DETAIL — step between units of the same item
 
 void drawBtn(BtnRect b, const String& label, uint16_t color) {
   tft.fillRoundRect(b.x, b.y, b.w, b.h, 6, color);
@@ -191,6 +206,23 @@ void layoutDetailButtons() {
   btnYearPlus  = {g2 + groupW - bw, y, bw, bh};
 
   btnSave = {(w - 140) / 2, y + 80, 140, 44};
+
+  // Unit prev/next arrows flank the centred Save button on the bottom row.
+  // Save spans x=(w-140)/2 .. +140 (170..310 at w=480), so these sit clear of
+  // it in the left/right margins.
+  int nav_y = y + 80, nav_w = 90, nav_h = 44;
+  btnUnitPrev = {8,              nav_y, nav_w, nav_h};
+  btnUnitNext = {w - 8 - nav_w,  nav_y, nav_w, nav_h};
+}
+
+// How many physical units of this item there are — one expiry slot per unit.
+// The .ino inventory diff already grows expiry_count to match quantity, but
+// fall back to the quantity string in case an item hasn't been through it yet.
+int itemUnitCount(const InventoryItem& it) {
+  int n = max((int)it.quantity.toInt(), it.expiry_count);
+  if (n < 1) n = 1;
+  if (n > MAX_EXPIRIES_PER_ITEM) n = MAX_EXPIRIES_PER_ITEM;
+  return n;
 }
 
 // ----------------------------------------------------------------------------
@@ -288,9 +320,11 @@ void drawItemDetail(int idx) {
   tft.drawString("Confidence: " + it.confidence, text_x, icon_y + 76);
 
   int editing_slot = currentExpiryIndex();
+  int unit_count   = itemUnitCount(it);
   String slot_label = "Expiry Date  (DD / MM / YYYY)";
-  if (it.expiry_count > 1)
-    slot_label = "Unit #" + String(editing_slot + 1) + "  Expiry  (DD / MM / YYYY)";
+  if (unit_count > 1)
+    slot_label = "Unit " + String(editing_slot + 1) + " / " + String(unit_count) +
+                 "   Expiry (DD / MM / YYYY)";
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
@@ -305,6 +339,14 @@ void drawItemDetail(int idx) {
   drawExpiryDate();
 
   drawBtn(btnSave, "Save", TFT_DARKGREEN);
+
+  // With several units, show left/right arrows flanking Save so the user can
+  // step through each unit and set its own expiry date. The "Unit X / N" label
+  // above tracks which unit is currently shown.
+  if (unit_count > 1) {
+    drawBtn(btnUnitPrev, "< Prev", TFT_NAVY);
+    drawBtn(btnUnitNext, "Next >", TFT_NAVY);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -583,9 +625,25 @@ void handleTouch() {
     return;
   }
 
-  // VIEW_STATS — same header "< Back" button as the item-detail page.
+  // VIEW_STATS — same header "< Back" button as the item-detail page, plus
+  // the same up/down scroll buttons as the inventory list.
   if (g_view == VIEW_STATS) {
-    if (inBtn(btnBackHit, tx, ty)) { g_view = VIEW_HOME; renderHomeScreen(); }
+    if (inBtn(btnBackHit, tx, ty)) { g_view = VIEW_HOME; renderHomeScreen(); return; }
+
+    StatsLayout sl = computeStatsLayout();
+    if (sl.show_up && ty >= sl.up_y && ty < sl.up_y + SCROLL_ARROW_H) {
+      g_stats_scroll = max(0, g_stats_scroll - sl.page_step);
+      renderStatsScreen();
+      return;
+    }
+    if (sl.show_down && ty >= sl.down_y && ty < sl.down_y + SCROLL_ARROW_H) {
+      // See the matching comment on the inventory list's down-button handler
+      // above — no backfill clamp, so a partial last page just shows the
+      // remaining items instead of re-showing some from the previous page.
+      g_stats_scroll = min(g_bought_count, g_stats_scroll + sl.page_step);
+      renderStatsScreen();
+      return;
+    }
     return;
   }
 
@@ -607,12 +665,8 @@ void handleTouch() {
     // (detail/stats/scan) — touch readings compress near the header and land
     // lower than the actual tap (see TOP_ROW_HIT_EXTEND_PX below), so a zone
     // limited to just HEADER_HEIGHT_PX made this button nearly unhittable.
-    // Kept narrow on x (0-130) so it doesn't swallow most of the up-arrow
-    // scroll strip (full width) — but the strip's left edge still falls
-    // inside that x range, so exclude it explicitly when it's on screen.
     BtnRect listBackHit = {0, 0, 130, 140};
-    bool onUpArrow = l.show_up && ty >= l.up_y && ty < l.up_y + SCROLL_ARROW_H;
-    if (!onUpArrow && inBtn(listBackHit, tx, ty)) {
+    if (inBtn(listBackHit, tx, ty)) {
       g_view = VIEW_HOME;
       renderHomeScreen();
       return;
@@ -620,15 +674,21 @@ void handleTouch() {
 
     if (ty < l.top || ty > l.bottom) return;
 
-    // Up/down scroll strips span the full width, independent of the
-    // right-edge "open details" arrow zone used by item rows.
-    if (onUpArrow) {
-      g_list_scroll = max(0, g_list_scroll - l.rows_visible);
+    // Up/down scroll buttons (see drawScrollArrow() in display.h) — the
+    // full strip height is tappable, not just the drawn button graphic,
+    // for a bigger and more forgiving touch target.
+    if (l.show_up && ty >= l.up_y && ty < l.up_y + SCROLL_ARROW_H) {
+      g_list_scroll = max(0, g_list_scroll - l.page_step);
       renderInventory();
       return;
     }
     if (l.show_down && ty >= l.down_y && ty < l.down_y + SCROLL_ARROW_H) {
-      g_list_scroll = min(max(0, g_item_count - l.rows_visible), g_list_scroll + l.rows_visible);
+      // No "backfill to a full last page" clamp here on purpose — show_down
+      // only appears when more than a full page remains, so stepping forward
+      // by page_step always lands on unseen items; clamping to
+      // g_item_count - page_step would instead walk back onto items already
+      // shown on the previous page whenever the last page is partial.
+      g_list_scroll = min(g_item_count, g_list_scroll + l.page_step);
       renderInventory();
       return;
     }
@@ -670,6 +730,26 @@ void handleTouch() {
 
   // VIEW_DETAIL
   if (inBtn(btnBackHit, tx, ty))   { g_view = VIEW_LIST; renderInventory(); return; }
+
+  // Unit navigation — step to the previous/next unit of this item and load
+  // that unit's expiry into the editor (wraps around at the ends). Only active
+  // when the item actually has more than one unit.
+  {
+    InventoryItem& it = g_items[g_detail_index];
+    int unit_count = itemUnitCount(it);
+    if (unit_count > 1) {
+      int cur = currentExpiryIndex();
+      if (inBtn(btnUnitPrev, tx, ty)) {
+        openItemDetail(g_detail_index, (cur - 1 + unit_count) % unit_count);
+        return;
+      }
+      if (inBtn(btnUnitNext, tx, ty)) {
+        openItemDetail(g_detail_index, (cur + 1) % unit_count);
+        return;
+      }
+    }
+  }
+
   if (inBtn(btnDayMinus, tx, ty))  { adjustExpiry(-1, 0, 0); return; }
   if (inBtn(btnDayPlus, tx, ty))   { adjustExpiry(1, 0, 0);  return; }
   if (inBtn(btnMonMinus, tx, ty))  { adjustExpiry(0, -1, 0); return; }

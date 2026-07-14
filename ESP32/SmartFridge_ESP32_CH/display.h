@@ -11,6 +11,8 @@
 #include <TJpg_Decoder.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <FS.h>
+#include <SPIFFS.h>
 
 #include "parameters.h"
 #include "SECRETS.h"
@@ -46,12 +48,24 @@ int g_list_scroll = 0;
 // ============================================================================
 // Hebrew product name rendering
 //
-// TFT_eSPI's built-in fonts have no Hebrew glyphs, so a Hebrew name would
-// just render blank. Rather than embedding a Unicode font (which blew past
-// the flash partition size), Hebrew names show a placeholder on the TFT —
-// the real name is still stored correctly in Firestore and shown as-is in
-// the phone app.
+// TFT_eSPI's built-in bitmap fonts have no Hebrew glyphs. Embedding a
+// Hebrew-only smooth ("VLW") font as a C array in flash previously blew
+// past the program partition size, so instead the font is loaded on demand
+// from SPIFFS (data/NotoSansHebrew-Regular18.vlw, uploaded separately via
+// the ESP32 filesystem-upload tool — it lives in the SPIFFS partition, not
+// program flash). If SPIFFS isn't mounted or the font file is missing,
+// Hebrew names fall back to a placeholder — the real name is still stored
+// correctly in Firestore and shown as-is in the phone app either way.
 // ============================================================================
+
+#define HEBREW_FONT_NAME "NotoSansHebrew-Regular18"
+
+bool g_spiffsReady = false;
+
+void initHebrewFont() {
+  g_spiffsReady = SPIFFS.begin(true);
+  if (!g_spiffsReady) Serial.println("[FONT] SPIFFS mount failed - Hebrew names will show placeholder");
+}
 
 // True if the UTF-8 string contains a Hebrew-block codepoint (U+0590-05FF),
 // i.e. a lead byte of 0xD6 or 0xD7 followed by a UTF-8 continuation byte.
@@ -73,13 +87,79 @@ String truncateItemName(const String& name) {
   return name.substring(0, ITEM_NAME_MAX_CHARS) + "...";
 }
 
-// Drop-in replacement for tft.drawString(name, x, y) — shows a placeholder
-// for Hebrew names (no glyphs available on this display) instead of
-// drawing the raw text, which would render blank/garbage. Long names are
-// capped at ITEM_NAME_MAX_CHARS with "..." so they never overlap whatever
-// is drawn to their right (e.g. the quantity/count text).
-void drawItemName(const String& name, int x, int y) {
+// Number of UTF-8 codepoints (not bytes) in a string — Hebrew letters are
+// 2 bytes each, so byte-length truncation would cut a codepoint in half.
+int utf8CodepointCount(const String& s) {
+  int n = 0;
+  for (size_t i = 0; i < s.length(); n++) {
+    uint8_t c = s[i];
+    i += (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+  }
+  return n;
+}
+
+// First maxCodepoints codepoints of a UTF-8 string, byte-safe.
+String utf8TruncateCodepoints(const String& s, int maxCodepoints) {
+  int n = 0;
+  size_t i = 0;
+  while (i < s.length() && n < maxCodepoints) {
+    uint8_t c = s[i];
+    i += (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+    n++;
+  }
+  return s.substring(0, i);
+}
+
+// Reverses codepoint (not byte) order. Hebrew is stored/typed in logical
+// (right-to-left reading) order, but drawString always draws left-to-right,
+// so without this the word would render back-to-front. Fine for plain
+// Hebrew text (no bidi mixing with digits/Latin, no letter-joining like
+// Arabic), which is all product names are.
+String reverseUtf8Codepoints(const String& s) {
+  String parts[ITEM_NAME_MAX_CHARS + 4];
+  int count = 0;
+  size_t i = 0;
+  while (i < s.length() && count < ITEM_NAME_MAX_CHARS + 4) {
+    uint8_t c = s[i];
+    size_t len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+    parts[count++] = s.substring(i, i + len);
+    i += len;
+  }
+  String out;
+  for (int k = count - 1; k >= 0; k--) out += parts[k];
+  return out;
+}
+
+// Drop-in replacement for tft.drawString(name, x, y). Hebrew names are
+// rendered with the Hebrew smooth font loaded from SPIFFS (reversed into
+// visual RTL order first); if that font isn't available, falls back to a
+// placeholder instead of drawing raw bytes, which would render blank/garbage.
+//
+// maxWidthPx bounds Hebrew names by measured pixel width rather than a fixed
+// character count: the smooth font's glyphs are much wider per-character
+// than the classic bitmap font ITEM_NAME_MAX_CHARS was tuned for, so a fixed
+// character cap still overran into whatever is drawn to the name's right
+// (quantity/count text) for long Hebrew names. Pass 0 to skip width-fitting
+// (falls back to the character-count cap, same as the non-Hebrew path).
+void drawItemName(const String& name, int x, int y, int maxWidthPx = 0) {
   if (containsHebrew(name)) {
+    if (g_spiffsReady) {
+      tft.loadFont(HEBREW_FONT_NAME, SPIFFS);
+      int keep = min(utf8CodepointCount(name), ITEM_NAME_MAX_CHARS);
+      bool truncated = keep < utf8CodepointCount(name);
+      String rtl;
+      while (true) {
+        String shown = utf8TruncateCodepoints(name, keep);
+        rtl = reverseUtf8Codepoints(shown);
+        if (truncated) rtl = "..." + rtl;
+        if (maxWidthPx <= 0 || tft.textWidth(rtl) <= maxWidthPx || keep <= 0) break;
+        keep--;
+        truncated = true;
+      }
+      tft.drawString(rtl, x, y);
+      tft.unloadFont();
+      return;
+    }
     tft.drawString(truncateItemName("Hebrew name item - see in the phone app"), x, y);
     return;
   }
@@ -287,7 +367,7 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
   uint8_t* jbuf = nullptr;
   size_t   jlen = 0;
   if (!fetchIconJpeg(name, &jbuf, &jlen)) {
-    tft.drawRect(x, y, ICON_SIZE_PX, ICON_SIZE_PX, TFT_DARKGREY);
+    drawIconPlaceholder(name, x, y, bg);
     return;
   }
 
@@ -305,10 +385,19 @@ void drawIcon(const String& name, int x, int y, uint16_t bg) {
     return;
   }
 
+  // Pick the largest power-of-2 TJpgDec scale that still leaves both
+  // dimensions >= ICON_SIZE_PX (the final on-screen size), rather than just
+  // shrinking to fit ICON_MAX_SRC_BYTES. Decoding any bigger than that just
+  // wastes a bigger sbuf malloc for no visible gain, since resampleAreaRGB565
+  // downsamples to ICON_SIZE_PX right after anyway — and on a no-PSRAM board
+  // a needlessly large contiguous malloc is exactly what fails under heap
+  // fragmentation from WiFi/TLS/RTDB-stream buffers.
   uint8_t dec_scale = 1;
   while (dec_scale < 8) {
-    if ((size_t)(jw/dec_scale) * (jh/dec_scale) * 2 <= ICON_MAX_SRC_BYTES) break;
-    dec_scale <<= 1;
+    uint8_t next = dec_scale << 1;
+    if ((int)(jw/next) < ICON_SIZE_PX || (int)(jh/next) < ICON_SIZE_PX) break;
+    if ((size_t)(jw/next) * (jh/next) * 2 > ICON_MAX_SRC_BYTES) break;
+    dec_scale = next;
   }
   int sw = jw / dec_scale, sh = jh / dec_scale;
   if (sw < ICON_SIZE_PX || sh < ICON_SIZE_PX) {
@@ -591,6 +680,7 @@ struct ListLayout {
   int  rows_visible;     // how many rows fit given the arrow strips shown
   bool show_down;        // more items below the visible window
   int  down_y;           // down-arrow strip top (only valid if show_down)
+  int  page_step;        // rows to move per up/down tap — see note below
 };
 
 ListLayout computeListLayout() {
@@ -612,20 +702,39 @@ ListLayout computeListLayout() {
   // just the screen-space ceiling, not the real count.
   l.rows_visible = min(capacity, remaining);
 
+  // Fixed step for the up/down buttons — always the full-page row count
+  // (as if both arrow strips were reserved), not rows_visible. rows_visible
+  // shrinks to a partial page on the last screenful, and stepping by that
+  // smaller number when paging back up would land short of the previous
+  // page's start, re-showing a few items that were already on screen.
+  l.page_step = max(1, (l.bottom - l.top - 2 * SCROLL_ARROW_H) / ROW_HEIGHT_PX);
+
   l.up_y     = l.top;
   l.rows_y0  = l.top + (l.show_up ? SCROLL_ARROW_H : 0);
   l.down_y   = l.rows_y0 + l.rows_visible * ROW_HEIGHT_PX;
   return l;
 }
 
+// Up/down scroll button — a small rounded pill in the right-hand corner,
+// styled to match the header's "< Back" button (dark-grey fill, white
+// border) so it reads as part of the same UI language, plus a soft top
+// highlight for a bit of depth. The reserved strip is SCROLL_ARROW_H tall
+// across the full row width so the tappable area (handled in touch.h) stays
+// generous, but only this compact button is actually drawn — the rest of
+// the strip stays plain black so it doesn't read as another full-width row.
 void drawScrollArrow(int y, bool pointingUp) {
   int w = tft.width();
-  tft.fillRect(0, y, w, SCROLL_ARROW_H, 0x2104);
-  tft.drawFastHLine(0, y, w, TFT_DARKGREY);
-  tft.drawFastHLine(0, y + SCROLL_ARROW_H - 1, w, TFT_DARKGREY);
-  int cx = w / 2, cy = y + SCROLL_ARROW_H / 2;
-  if (pointingUp) tft.fillTriangle(cx - 10, cy + 6, cx + 10, cy + 6, cx, cy - 6, TFT_LIGHTGREY);
-  else             tft.fillTriangle(cx - 10, cy - 6, cx + 10, cy - 6, cx, cy + 6, TFT_LIGHTGREY);
+  tft.fillRect(0, y, w, SCROLL_ARROW_H, TFT_BLACK);
+
+  int boxW = SCROLL_ARROW_BOX_W, boxH = SCROLL_ARROW_H - 6;
+  int bx = w - boxW - SIDE_PADDING_PX, by = y + 3;
+  tft.fillRoundRect(bx, by, boxW, boxH, 8, TFT_DARKGREY);
+  tft.drawRoundRect(bx, by, boxW, boxH, 8, TFT_WHITE);
+  tft.drawFastHLine(bx + 8, by + 2, boxW - 16, 0x4A69);  // subtle top highlight
+
+  int cx = bx + boxW / 2, cy = by + boxH / 2;
+  if (pointingUp) tft.fillTriangle(cx - 8, cy + 5, cx + 8, cy + 5, cx, cy - 6, TFT_WHITE);
+  else             tft.fillTriangle(cx - 8, cy - 5, cx + 8, cy - 5, cx, cy + 6, TFT_WHITE);
 }
 
 void drawItemRow(int index, int y) {
@@ -649,7 +758,7 @@ void drawItemRow(int index, int y) {
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_WHITE, bg);
   tft.setTextSize(2);
-  drawItemName(g_items[index].name, text_x, text_cy);
+  drawItemName(g_items[index].name, text_x, text_cy, text_right - text_x);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(TFT_CYAN, bg);
   tft.drawString(g_items[index].quantity, text_right, text_cy);

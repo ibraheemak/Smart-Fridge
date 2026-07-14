@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -5,6 +6,11 @@ import '../config.dart';
 import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
 import '../theme/app_theme.dart';
+
+// How long to wait for a fresh photo after requesting one before showing a
+// timeout error — mirrors LIVEVIEW_TIMEOUT_MS on the CH board's ESP-NOW Live
+// View (same idea, applied to the RTDB+Firestore round trip this screen uses).
+const _liveViewTimeout = Duration(seconds: 10);
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -14,42 +20,60 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
-  Uint8List? _imageBytes;
-  String _camUrl = AppConfig.esp32CamBaseUrl;
-  bool _loading = false;
+  int _roof = 1;
+  bool _requesting = false;
   bool _scanning = false;
   String _error = '';
-  DateTime? _fetchedAt;
+  Timer? _timeoutTimer;
 
-  Future<void> _refresh() async {
-    if (_loading) return;
+  @override
+  void initState() {
+    super.initState();
+    _requestSnapshot();
+  }
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _requestSnapshot() async {
+    _timeoutTimer?.cancel();
     setState(() {
-      _loading = true;
+      _requesting = true;
       _error = '';
     });
     try {
-      final res = await http
-          .get(Uri.parse('$_camUrl/latest.jpg'))
-          .timeout(const Duration(seconds: 10));
-      if (res.statusCode == 200) {
-        setState(() {
-          _imageBytes = res.bodyBytes;
-          _fetchedAt = DateTime.now();
-          _error = '';
-        });
-      } else {
-        setState(
-            () => _error = 'No image yet — close the door to trigger a scan.');
-      }
+      await FridgeService.requestLiveViewSnapshot(_roof);
     } catch (_) {
-      setState(() => _error =
-          'Cannot reach ESP32-CAM.\n'
-          '• Check that your phone is on the same WiFi as the fridge.\n'
-          '• Tap the settings icon to update the IP address.\n'
-          '• Current: $_camUrl');
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _requesting = false;
+          _error = 'Could not reach Firebase — check your connection.';
+        });
+      }
+      return;
     }
+    _timeoutTimer = Timer(_liveViewTimeout, () {
+      if (mounted && _requesting) {
+        setState(() {
+          _requesting = false;
+          _error = 'No response from roof $_roof — is that camera online?';
+        });
+      }
+    });
+  }
+
+  void _onPhotoArrived() {
+    if (!_requesting) return;
+    _timeoutTimer?.cancel();
+    setState(() => _requesting = false);
+  }
+
+  void _switchRoof() {
+    setState(() => _roof = _roof % AppConfig.numRoofs + 1);
+    _requestSnapshot();
   }
 
   Future<void> _runAiScan() async {
@@ -57,7 +81,7 @@ class _CameraScreenState extends State<CameraScreen> {
     setState(() => _scanning = true);
     try {
       await http
-          .get(Uri.parse('$_camUrl/scan'))
+          .get(Uri.parse('${AppConfig.esp32CamBaseUrl}/scan'))
           .timeout(const Duration(seconds: 30));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -66,9 +90,6 @@ class _CameraScreenState extends State<CameraScreen> {
             backgroundColor: AppColors.secondary,
           ),
         );
-        // Reload image after scan
-        await Future.delayed(const Duration(seconds: 3));
-        await _refresh();
       }
     } catch (_) {
       if (mounted) {
@@ -82,52 +103,6 @@ class _CameraScreenState extends State<CameraScreen> {
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
-  }
-
-  void _showIpDialog() {
-    final ctrl = TextEditingController(text: _camUrl);
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('ESP32-CAM IP Address'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Find the IP in the Arduino Serial Monitor on boot:\n[WEB] http://192.168.x.x/latest.jpg',
-              style: TextStyle(
-                  fontSize: 12, color: AppColors.onSurfaceVariant),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctrl,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                hintText: 'http://192.168.1.100',
-                prefixIcon:
-                    Icon(Icons.wifi_rounded, color: AppColors.primary),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel',
-                style: TextStyle(color: AppColors.onSurfaceVariant)),
-          ),
-          FilledButton(
-            onPressed: () {
-              setState(() => _camUrl = ctrl.text.trim());
-              Navigator.pop(context);
-              _refresh();
-            },
-            child: const Text('Connect'),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -147,15 +122,16 @@ class _CameraScreenState extends State<CameraScreen> {
                   Text('Live View',
                       style: Theme.of(context).textTheme.headlineMedium),
                   const Spacer(),
+                  if (AppConfig.numRoofs > 1)
+                    IconButton(
+                      onPressed: _requesting ? null : _switchRoof,
+                      icon: const Icon(Icons.switch_camera_rounded,
+                          color: AppColors.primary),
+                      tooltip: 'Switch Roof',
+                    ),
                   IconButton(
-                    onPressed: _showIpDialog,
-                    icon: const Icon(Icons.settings_rounded,
-                        color: AppColors.primary),
-                    tooltip: 'Set ESP32-CAM IP',
-                  ),
-                  IconButton(
-                    onPressed: _loading ? null : _refresh,
-                    icon: _loading
+                    onPressed: _requesting ? null : _requestSnapshot,
+                    icon: _requesting
                         ? const SizedBox(
                             width: 20,
                             height: 20,
@@ -170,7 +146,9 @@ class _CameraScreenState extends State<CameraScreen> {
                 ],
               ),
               Text(
-                _camUrl,
+                AppConfig.numRoofs > 1
+                    ? 'Roof $_roof of ${AppConfig.numRoofs}'
+                    : 'Fridge camera',
                 style: const TextStyle(
                     fontSize: 12, color: AppColors.onSurfaceVariant),
               ),
@@ -178,96 +156,118 @@ class _CameraScreenState extends State<CameraScreen> {
 
               // ── Image frame ─────────────────────────────────────────────
               Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      // Image / placeholder
-                      Container(
-                        color: AppColors.surfaceContainerHighest,
-                        child: _imageBytes != null
-                            ? InteractiveViewer(
-                                child: Image.memory(_imageBytes!,
-                                    fit: BoxFit.contain))
-                            : Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(32),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.videocam_rounded,
-                                        size: 72,
-                                        color: AppColors.outline,
+                child: StreamBuilder<({Uint8List? photo, String? capturedAt})>(
+                  stream: FridgeService.liveViewPhotoStream(_roof),
+                  builder: (context, snap) {
+                    final photo = snap.data?.photo;
+                    if (snap.hasData) {
+                      // Defer to after this build so we don't call setState
+                      // while the widget tree is still building.
+                      WidgetsBinding.instance
+                          .addPostFrameCallback((_) => _onPhotoArrived());
+                    }
+
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Container(
+                            color: AppColors.surfaceContainerHighest,
+                            child: photo != null
+                                ? InteractiveViewer(
+                                    child: Image.memory(photo,
+                                        fit: BoxFit.contain))
+                                : Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(32),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            _requesting
+                                                ? Icons.hourglass_top_rounded
+                                                : Icons.videocam_rounded,
+                                            size: 72,
+                                            color: AppColors.outline,
+                                          ),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            _error.isNotEmpty
+                                                ? _error
+                                                : _requesting
+                                                    ? 'Requesting photo from roof $_roof...'
+                                                    : 'Tap refresh to load the latest fridge photo',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              color: _error.isNotEmpty
+                                                  ? AppColors.error
+                                                  : AppColors.onSurfaceVariant,
+                                              fontSize: 14,
+                                              height: 1.5,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                      const SizedBox(height: 16),
-                                      Text(
-                                        _error.isEmpty
-                                            ? 'Tap the button below to\nload the latest fridge photo'
-                                            : _error,
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: _error.isEmpty
-                                              ? AppColors.onSurfaceVariant
-                                              : AppColors.error,
-                                          fontSize: 14,
-                                          height: 1.5,
-                                        ),
-                                      ),
-                                    ],
+                                    ),
                                   ),
+                          ),
+
+                          // LIVE badge (when a photo is loaded)
+                          if (photo != null)
+                            Positioned(
+                              top: 12,
+                              right: 12,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: AppColors.error,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    Icon(Icons.circle,
+                                        color: Colors.white, size: 6),
+                                    SizedBox(width: 5),
+                                    Text(
+                                      'LIVE',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 1,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
+                            ),
+                        ],
                       ),
-
-                      // LIVE badge (when image is loaded)
-                      if (_imageBytes != null)
-                        Positioned(
-                          top: 12,
-                          right: 12,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: AppColors.error,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: const [
-                                Icon(Icons.circle,
-                                    color: Colors.white, size: 6),
-                                SizedBox(width: 5),
-                                Text(
-                                  'LIVE',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 1,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
 
               const SizedBox(height: 12),
 
               // Timestamp
-              if (_fetchedAt != null)
-                Center(
-                  child: Text(
-                    'Loaded at ${_time(_fetchedAt!)}  •  tap refresh to update',
-                    style: const TextStyle(
-                        fontSize: 11, color: AppColors.onSurfaceVariant),
-                  ),
-                ),
+              StreamBuilder<({Uint8List? photo, String? capturedAt})>(
+                stream: FridgeService.liveViewPhotoStream(_roof),
+                builder: (context, snap) {
+                  final capturedAt = snap.data?.capturedAt;
+                  if (capturedAt == null) return const SizedBox.shrink();
+                  return Center(
+                    child: Text(
+                      'Captured at $capturedAt',
+                      style: const TextStyle(
+                          fontSize: 11, color: AppColors.onSurfaceVariant),
+                    ),
+                  );
+                },
+              ),
 
               const SizedBox(height: 14),
 
@@ -276,16 +276,15 @@ class _CameraScreenState extends State<CameraScreen> {
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: _loading ? null : _refresh,
-                      icon: _loading
+                      onPressed: _requesting ? null : _requestSnapshot,
+                      icon: _requesting
                           ? const SizedBox(
                               width: 18,
                               height: 18,
                               child: CircularProgressIndicator(
                                   strokeWidth: 2, color: Colors.white))
                           : const Icon(Icons.refresh_rounded),
-                      label: Text(
-                          _imageBytes == null ? 'Load Photo' : 'Refresh'),
+                      label: const Text('Refresh'),
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
@@ -410,11 +409,6 @@ class _CameraScreenState extends State<CameraScreen> {
       ),
     );
   }
-
-  String _time(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:'
-      '${dt.minute.toString().padLeft(2, '0')}:'
-      '${dt.second.toString().padLeft(2, '0')}';
 }
 
 class _InsightCard extends StatelessWidget {

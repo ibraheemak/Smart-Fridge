@@ -38,7 +38,7 @@
 // each other. The CH display board merges all roof docs into the combined
 // inventory/current doc that it (and the app) actually displays/edits — see
 // inventory_merge.h on the CH board.
-#define CAMERA_ROOF  1   // 1, 2, 3... — set per physical board
+#define CAMERA_ROOF  2   // 1, 2, 3... — set per physical board
 #define STRINGIFY2(x) #x
 #define STRINGIFY(x)  STRINGIFY2(x)
 #define INVENTORY_DOC_ID  "roof" STRINGIFY(CAMERA_ROOF)
@@ -108,6 +108,13 @@ static uint8_t CH_MAC_ADDR[6] = { 0xA8, 0x42, 0xE3, 0x46, 0xE0, 0x64 };
 #define CAMERA_WARMUP_DELAY_MS  500  // warmup frames delay (DEBUG_MODE only)
 #define FLASH_DURATION_MS       600
 #define FLASH_PWM_DUTY           80  // 0-255; 80 ≈ 31% brightness
+
+// Live View (US #11) — deliberately lower-res/lower-quality than the AI-scan
+// capture above: the frame has to fit through ESP-NOW in a reasonable number
+// of small chunks (see espnow_link.h), so a smaller JPEG matters more here
+// than image sharpness.
+#define LIVEVIEW_FRAMESIZE       FRAMESIZE_QVGA   // 320x240
+#define LIVEVIEW_JPEG_QUALITY          35         // higher number = more compression
 
 // ----------------------------------------------------------------------------
 // WIFI

@@ -30,6 +30,7 @@
 #include "gemini.h"
 #include "led_strip.h"
 #include "espnow_link.h"
+#include "liveview_rtdb.h"
 #include "temperature.h"
 #include "offline_buffer.h"
 
@@ -251,6 +252,7 @@ void setup() {
   initOfflineBuffer();
   initFlash();
   initCamera();
+  initLiveViewRtdbStream();
 #if CAMERA_ROOF == 1
   initLEDStrip();
   initTempSensor();
@@ -299,6 +301,20 @@ void loop() {
   if (espnowScanTriggerReceived()) {
     Serial.println("[ESPNOW] SCAN_TRIGGER received — auto scan");
     captureAndProcess();            // existing scan flow
+  }
+
+  if (espnowLiveViewRequested()) {
+    Serial.println("[ESPNOW] LIVE_CAPTURE received — sending snapshot");
+    size_t sz = 0;
+    uint8_t* jpeg = capturePhotoForLiveView(&sz);
+    if (jpeg) { espnowSendLiveViewFrame(jpeg, sz); free(jpeg); }
+  }
+
+  if (liveViewRtdbStreamPoll()) {
+    Serial.println("[LIVEVIEW-RTDB] request received — capturing snapshot");
+    size_t sz = 0;
+    uint8_t* jpeg = capturePhotoForLiveView(&sz);
+    if (jpeg) { saveLiveViewPhotoToFirestore(jpeg, sz); free(jpeg); }
   }
 
   if (Serial.available())

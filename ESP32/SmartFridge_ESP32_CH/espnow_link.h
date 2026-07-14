@@ -46,7 +46,87 @@ static volatile bool  g_espnow_temp_pending = false;
 static volatile float g_espnow_temp_c       = -1.0f;
 static volatile float g_espnow_humidity     = -1.0f;
 
+// ----------------------------------------------------------------------------
+// Live View — CAM boards reply to a "LIVE_CAPTURE" request with a JPEG
+// snapshot, split into chunks small enough for a single ESP-NOW packet
+// (legacy ESP-NOW payload limit is ~250 bytes). Chunks are disambiguated from
+// the ASCII "TEMP:"/"SCAN_TRIGGER" strings by a non-printable leading magic
+// byte, since none of those strings can start with it.
+// ----------------------------------------------------------------------------
+#pragma pack(push, 1)
+struct LiveViewChunkHdr {
+  uint8_t  magic;        // LIVEVIEW_CHUNK_MAGIC
+  uint8_t  roof;         // 1-based roof index this frame came from
+  uint16_t chunkIndex;   // 0..totalChunks-1
+  uint16_t totalChunks;
+  uint16_t totalSize;    // full JPEG size in bytes (same value in every chunk)
+};
+#pragma pack(pop)
+
+#define LIVEVIEW_CHUNK_MAGIC    0x01
+#define LIVEVIEW_CHUNK_PAYLOAD  200                 // JPEG bytes per ESP-NOW packet
+#define LIVEVIEW_MAX_JPEG_BYTES (40 * 1024)          // reject anything larger (malloc guard)
+#define LIVEVIEW_MAX_CHUNKS     (LIVEVIEW_MAX_JPEG_BYTES / LIVEVIEW_CHUNK_PAYLOAD + 1)
+
+static uint8_t* g_lv_rx_buf          = nullptr;
+static size_t   g_lv_rx_size         = 0;
+static uint16_t g_lv_rx_total_chunks = 0;
+static uint16_t g_lv_rx_received     = 0;
+static uint8_t  g_lv_rx_roof         = 0;
+static bool     g_lv_rx_seen[LIVEVIEW_MAX_CHUNKS];
+static volatile bool g_lv_rx_active    = false;   // a transfer is in progress
+static volatile bool g_lv_rx_ready     = false;   // a transfer just completed
+static volatile uint32_t g_lv_rx_last_chunk_ms = 0;
+
+// Runs on the WiFi/LWIP task — only copies into the reassembly buffer, never
+// touches the TFT (matches the pending-flag pattern used for TEMP: above).
+void onLiveViewChunk(const uint8_t *data, int len) {
+  if (len < (int)sizeof(LiveViewChunkHdr)) return;
+  LiveViewChunkHdr hdr;
+  memcpy(&hdr, data, sizeof(hdr));
+  const uint8_t *payload = data + sizeof(hdr);
+  int payloadLen = len - (int)sizeof(hdr);
+
+  if (hdr.totalSize == 0 || hdr.totalSize > LIVEVIEW_MAX_JPEG_BYTES) return;
+  if (hdr.totalChunks == 0 || hdr.totalChunks > LIVEVIEW_MAX_CHUNKS) return;
+  if (hdr.chunkIndex >= hdr.totalChunks) return;
+
+  // First chunk of a new transfer (re)starts reassembly, discarding whatever
+  // partial buffer (if any) was in flight for a previous request.
+  if (hdr.chunkIndex == 0) {
+    if (g_lv_rx_buf) { free(g_lv_rx_buf); g_lv_rx_buf = nullptr; }
+    g_lv_rx_buf = (uint8_t*)malloc(hdr.totalSize);
+    if (!g_lv_rx_buf) { g_lv_rx_active = false; return; }
+    g_lv_rx_size         = hdr.totalSize;
+    g_lv_rx_total_chunks = hdr.totalChunks;
+    g_lv_rx_received     = 0;
+    g_lv_rx_roof         = hdr.roof;
+    memset(g_lv_rx_seen, 0, sizeof(g_lv_rx_seen));
+    g_lv_rx_active = true;
+    g_lv_rx_ready  = false;
+  }
+
+  if (!g_lv_rx_active || !g_lv_rx_buf) return;
+  if (hdr.totalChunks != g_lv_rx_total_chunks || hdr.roof != g_lv_rx_roof) return;  // stale packet from a prior transfer
+  if (g_lv_rx_seen[hdr.chunkIndex]) { g_lv_rx_last_chunk_ms = millis(); return; }    // duplicate
+
+  size_t offset = (size_t)hdr.chunkIndex * LIVEVIEW_CHUNK_PAYLOAD;
+  size_t maxLen = g_lv_rx_size - offset;
+  size_t copyLen = min((size_t)payloadLen, maxLen);
+  memcpy(g_lv_rx_buf + offset, payload, copyLen);
+  g_lv_rx_seen[hdr.chunkIndex] = true;
+  g_lv_rx_received++;
+  g_lv_rx_last_chunk_ms = millis();
+
+  if (g_lv_rx_received >= g_lv_rx_total_chunks) {
+    g_lv_rx_active = false;
+    g_lv_rx_ready  = true;
+  }
+}
+
 void onEspNowDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  if (len >= 1 && data[0] == LIVEVIEW_CHUNK_MAGIC) { onLiveViewChunk(data, len); return; }
+
   if (len < 5 || memcmp(data, "TEMP:", 5) != 0) return;
 
   char buf[32];
@@ -60,6 +140,29 @@ void onEspNowDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int 
   g_espnow_temp_c   = tempC;
   g_espnow_humidity = humidity;
   g_espnow_temp_pending = true;
+}
+
+// Returns true exactly once when a full JPEG frame has been reassembled,
+// handing ownership of the malloc'd buffer to the caller (must free() it).
+bool liveViewFrameReady(uint8_t &roof, uint8_t** jpegBuf, size_t* jpegLen) {
+  if (!g_lv_rx_ready) return false;
+  g_lv_rx_ready = false;
+  roof     = g_lv_rx_roof;
+  *jpegBuf = g_lv_rx_buf;
+  *jpegLen = g_lv_rx_size;
+  g_lv_rx_buf = nullptr;   // ownership transferred
+  return true;
+}
+
+// Returns true exactly once if a transfer was in progress and stalled past
+// LIVEVIEW_TIMEOUT_MS — frees the partial buffer so a stuck transfer can't
+// wedge the next request.
+bool liveViewTransferTimedOut() {
+  if (!g_lv_rx_active) return false;
+  if (millis() - g_lv_rx_last_chunk_ms < LIVEVIEW_TIMEOUT_MS) return false;
+  g_lv_rx_active = false;
+  if (g_lv_rx_buf) { free(g_lv_rx_buf); g_lv_rx_buf = nullptr; }
+  return true;
 }
 
 // Returns true exactly once when a fresh temperature reading arrives.
@@ -111,4 +214,14 @@ void espnowSendScanTrigger() {
     esp_err_t result = esp_now_send(CAM_MAC_ADDRS[i], (const uint8_t *)msg, strlen(msg));
     Serial.printf("[ESPNOW] >> SCAN_TRIGGER -> roof%d (%s)\n", i + 1, result == ESP_OK ? "ok" : "failed");
   }
+}
+
+// Requests a Live View snapshot from a single roof (1-based), unlike
+// espnowSendScanTrigger() which fans out to every roof — Live View only
+// looks at one roof at a time.
+void espnowSendLiveViewRequest(int roofIndex1Based) {
+  if (roofIndex1Based < 1 || roofIndex1Based > NUM_ROOFS) return;
+  const char *msg = "LIVE_CAPTURE";
+  esp_err_t result = esp_now_send(CAM_MAC_ADDRS[roofIndex1Based - 1], (const uint8_t *)msg, strlen(msg));
+  Serial.printf("[ESPNOW] >> LIVE_CAPTURE -> roof%d (%s)\n", roofIndex1Based, result == ESP_OK ? "ok" : "failed");
 }

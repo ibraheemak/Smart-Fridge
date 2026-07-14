@@ -103,3 +103,24 @@ uint8_t* capturePhoto(size_t* photo_size) {
   Serial.printf("[CAPTURE] %d bytes\n", *photo_size);
   return data;
 }
+
+// Live View snapshot — temporarily switches the sensor to a smaller frame
+// size / lower quality (see LIVEVIEW_FRAMESIZE/LIVEVIEW_JPEG_QUALITY in
+// parameters.h) so the JPEG fits through ESP-NOW in a reasonable number of
+// chunks, then restores the AI-scan settings. Reuses capturePhoto() as-is
+// for the actual flash-strobe + stale-frame-discard capture sequence.
+uint8_t* capturePhotoForLiveView(size_t* photo_size) {
+  sensor_t* s = esp_camera_sensor_get();
+  framesize_t origFramesize = s->status.framesize;
+  int origQuality = s->status.quality;
+
+  s->set_framesize(s, LIVEVIEW_FRAMESIZE);
+  s->set_quality(s, LIVEVIEW_JPEG_QUALITY);
+  delay(150);   // let AEC/AWB settle after the framesize/quality change
+
+  uint8_t* data = capturePhoto(photo_size);
+
+  s->set_framesize(s, origFramesize);
+  s->set_quality(s, origQuality);
+  return data;
+}

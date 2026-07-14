@@ -305,6 +305,7 @@ void setup() {
   tft.setRotation(DISPLAY_ROTATION);
   tft.fillScreen(TFT_BLACK);
   TJpgDec.setSwapBytes(true);
+  initHebrewFont();
 
   showStatus("Smart Fridge", "Booting...");
   initTouch();
@@ -399,6 +400,16 @@ void loop() {
     if (g_view == VIEW_HOME) updateHomeHeaderSensors();
     // Raise (or clear) the out-of-range alert on every fresh reading.
     checkEnvironmentAlert();
+  }
+
+  // Live View — a requested roof's JPEG snapshot finishing reassembly, or a
+  // stalled transfer giving up (see espnow_link.h for the chunk protocol).
+  uint8_t lv_roof; uint8_t* lv_jpeg = nullptr; size_t lv_len = 0;
+  if (liveViewFrameReady(lv_roof, &lv_jpeg, &lv_len)) {
+    liveViewOnFrameReceived(lv_roof, lv_jpeg, lv_len);
+  }
+  if (liveViewTransferTimedOut()) {
+    liveViewOnTimeout();
   }
 
   // Show a deferred alert once the user is back on an idle screen.
