@@ -3,6 +3,7 @@ import 'package:fl_chart/fl_chart.dart';
 import '../models/scan_record.dart';
 import '../services/fridge_service.dart';
 import '../theme/app_theme.dart';
+import 'history_screen.dart';
 
 class AnalyticsScreen extends StatelessWidget {
   const AnalyticsScreen({super.key});
@@ -47,7 +48,8 @@ class AnalyticsScreen extends StatelessWidget {
                     const SizedBox(width: 12),
                     _SummaryCard(
                       label: 'Total Items',
-                      value: '${scans.fold<int>(0, (s, r) => s + r.itemCount)}',
+                      value:
+                          '${scans.fold<int>(0, (s, r) => s + r.itemCount)}',
                       icon: Icons.inventory_2_rounded,
                       color: AppColors.secondary,
                     ),
@@ -73,47 +75,27 @@ class AnalyticsScreen extends StatelessWidget {
 
                 const SizedBox(height: 20),
 
-                // AI insight card
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF1A237E), Color(0xFF3949AB)],
+                // Recent scans + "Full History" link
+                _RecentScansList(scans: scans.take(5).toList()),
+
+                const SizedBox(height: 8),
+
+                Center(
+                  child: TextButton.icon(
+                    onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const HistoryScreen())),
+                    icon: const Icon(Icons.history_rounded,
+                        color: AppColors.primary, size: 18),
+                    label: const Text(
+                      'Full Scan History →',
+                      style: TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w600),
                     ),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.auto_awesome_rounded,
-                          color: Colors.white, size: 28),
-                      const SizedBox(width: 14),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('AI Insight',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700)),
-                            SizedBox(height: 4),
-                            Text(
-                              'Based on your scan history, vegetable consumption is up. '
-                              'Consider restocking leafy greens more frequently.',
-                              style: TextStyle(
-                                  color: Colors.white70, fontSize: 12),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
                   ),
                 ),
-
-                const SizedBox(height: 20),
-
-                // Recent scans list
-                _RecentScansList(scans: scans.take(10).toList()),
               ],
             ),
           );
@@ -124,8 +106,7 @@ class AnalyticsScreen extends StatelessWidget {
 
   int _scansThisWeek(List<ScanRecord> scans) {
     final now = DateTime.now();
-    final weekStart =
-        now.subtract(Duration(days: now.weekday - 1));
+    final weekStart = now.subtract(Duration(days: now.weekday - 1));
     return scans.where((s) {
       try {
         final d = DateTime.parse(s.id);
@@ -194,7 +175,7 @@ class _WeeklyChart extends StatelessWidget {
     for (final s in scans) {
       try {
         final d = DateTime.parse(s.id);
-        final idx = d.weekday - 1; // Mon=0 … Sun=6
+        final idx = d.weekday - 1;
         counts[idx]++;
       } catch (_) {}
     }
@@ -319,9 +300,7 @@ class _TopItems extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final counts = _itemCounts();
-    if (counts.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    if (counts.isEmpty) return const SizedBox.shrink();
     final sorted = counts.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     final top = sorted.take(5).toList();
@@ -362,7 +341,7 @@ class _TopItems extends StatelessWidget {
                   Container(
                     width: 24,
                     height: 24,
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       color: AppColors.primaryFixed,
                       shape: BoxShape.circle,
                     ),
@@ -440,7 +419,7 @@ class _RecentScansList extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Scan History',
+          const Text('Recent Scans',
               style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,

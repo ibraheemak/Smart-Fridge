@@ -6,6 +6,20 @@ import '../config.dart';
 import '../models/fridge_item.dart';
 import '../models/scan_record.dart';
 
+class ShoppingItem {
+  final String id; // Firestore document ID
+  final String name;
+  final bool checked;
+
+  const ShoppingItem({required this.id, required this.name, this.checked = false});
+
+  factory ShoppingItem.fromDoc(String id, Map<String, dynamic> map) => ShoppingItem(
+        id: id,
+        name: map['name'] as String? ?? '',
+        checked: map['checked'] as bool? ?? false,
+      );
+}
+
 class FridgeService {
   static final _db = FirebaseFirestore.instance;
   static DocumentReference get _fridgeRef =>
@@ -31,7 +45,6 @@ class FridgeService {
           : null);
 
   /// Live door state from hall sensor on the CH board.
-  /// Document: fridges/{id}/sensors/door  fields: state, updatedAt
   static Stream<DoorStatus?> doorStream() => _fridgeRef
       .collection('sensors')
       .doc('door')
@@ -40,7 +53,7 @@ class FridgeService {
           ? DoorStatus.fromMap(s.data()!)
           : null);
 
-  /// Live temperature/humidity from DHT11 on the CH board.
+  /// Live temperature/humidity from DHT11 on the CAM roof1 board.
   static Stream<TemperatureReading?> temperatureStream() => _fridgeRef
       .collection('sensors')
       .doc('temperature')
@@ -50,7 +63,6 @@ class FridgeService {
           : null);
 
   /// Last 20 scans, newest first.
-  /// Sorted client-side (doc IDs are ISO timestamps — sort lexicographically).
   static Stream<List<ScanRecord>> scanHistoryStream() => _fridgeRef
       .collection('scans')
       .limit(20)
@@ -65,20 +77,15 @@ class FridgeService {
 
   // ── Live View (RTDB request → CAM board → Firestore photo) ─────────────────
 
-  /// Asks the given roof's ESP32-CAM board (1-based) for a fresh snapshot.
-  /// The CAM board keeps an RTDB SSE stream open on this exact path (see
-  /// liveview_rtdb.h) and reacts to any change here — same "bump a
-  /// server-timestamp value" idiom the boards already use for the inventory
-  /// doorbell (rtdb_notify.h).
   static Future<void> requestLiveViewSnapshot(int roof) {
     return _rtdb
         .ref('fridges/${AppConfig.fridgeId}/liveview_requests/roof$roof/requested_at')
         .set(ServerValue.timestamp);
   }
 
-  /// Live Live View photo for the given roof (1-based). Firestore's
-  /// `bytesValue` field type comes back from cloud_firestore as a [Blob]
-  /// wrapper, not a raw Uint8List — .bytes unwraps it.
+  /// Live photo for the given roof (1-based). The CAM board writes a
+  /// base64-encoded JPEG to `photo` (Firestore bytesValue) and a timestamp
+  /// string to `capturedAt`.
   static Stream<({Uint8List? photo, String? capturedAt})> liveViewPhotoStream(
           int roof) =>
       _fridgeRef.collection('liveview').doc('roof$roof').snapshots().map(
@@ -88,24 +95,39 @@ class FridgeService {
             ),
           );
 
-  // ── One-shot reads ─────────────────────────────────────────────────────────
+  // ── Shopping List (fridges/{id}/shopping_list/{auto-id}) ───────────────────
 
-  /// Canonical item names from basic-items/basic-items.
-  /// The ESP32 uses these to steer Gemini toward known product names.
-  static Future<List<String>> fetchBasicItems() async {
-    try {
-      final doc =
-          await _db.collection('basic-items').doc('basic-items').get();
-      if (!doc.exists) return [];
-      final raw = doc.data()?['items'];
-      if (raw is List) return raw.cast<String>();
-      if (raw is String) {
-        return raw.split(',').map((s) => s.trim()).toList();
-      }
-      return [];
-    } catch (_) {
-      return [];
+  static CollectionReference get _shoppingRef =>
+      _fridgeRef.collection('shopping_list');
+
+  static Stream<List<ShoppingItem>> shoppingListStream() => _shoppingRef
+      .orderBy('name')
+      .snapshots()
+      .map((s) => s.docs
+          .map((d) => ShoppingItem.fromDoc(d.id, d.data() as Map<String, dynamic>))
+          .toList());
+
+  static Future<void> addShoppingItem(String name) async {
+    final key = name.toLowerCase().trim();
+    // Avoid duplicate entries (same name already in list)
+    final existing = await _shoppingRef.where('name', isEqualTo: key).limit(1).get();
+    if (existing.docs.isNotEmpty) return;
+    await _shoppingRef.add({'name': key, 'checked': false});
+  }
+
+  static Future<void> toggleShoppingItem(String id, bool currentChecked) =>
+      _shoppingRef.doc(id).update({'checked': !currentChecked});
+
+  static Future<void> removeShoppingItem(String id) =>
+      _shoppingRef.doc(id).delete();
+
+  static Future<void> clearShoppingList() async {
+    final batch = _db.batch();
+    final docs = await _shoppingRef.get();
+    for (final doc in docs.docs) {
+      batch.delete(doc.reference);
     }
+    await batch.commit();
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────

@@ -18,82 +18,93 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: StreamBuilder<List<ScanRecord>>(
-          stream: FridgeService.scanHistoryStream(),
-          builder: (context, snap) {
-            final scans = snap.data ?? [];
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.background,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded,
+              color: AppColors.onSurface),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Scan History',
+            style: TextStyle(
+                color: AppColors.onSurface,
+                fontSize: 20,
+                fontWeight: FontWeight.w700)),
+      ),
+      body: StreamBuilder<List<ScanRecord>>(
+        stream: FridgeService.scanHistoryStream(),
+        builder: (context, snap) {
+          final scans = snap.data ?? [];
 
-            return CustomScrollView(
-              slivers: [
+          return CustomScrollView(
+            slivers: [
+              // Chart
+              if (scans.length >= 2)
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
-                    child: Text(
-                      'Scan History',
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    child: _ItemCountChart(scans: scans),
                   ),
                 ),
 
-                // Chart
-                if (scans.length >= 2)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding:
-                          const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: _ItemCountChart(scans: scans),
-                    ),
-                  ),
-
-                // Empty state
-                if (scans.isEmpty &&
-                    snap.connectionState != ConnectionState.waiting)
-                  SliverFillRemaining(
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text('📋',
-                              style: TextStyle(fontSize: 72)),
-                          const SizedBox(height: 16),
-                          Text('No scans yet',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleLarge),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Close the fridge door to trigger the first scan',
+              // Empty state
+              if (scans.isEmpty &&
+                  snap.connectionState != ConnectionState.waiting)
+                const SliverFillRemaining(
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('📋', style: TextStyle(fontSize: 72)),
+                        SizedBox(height: 16),
+                        Text('No scans yet',
                             style: TextStyle(
-                                color: AppColors.textSecondary),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  SliverPadding(
-                    padding:
-                        const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (_, i) => Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: _ScanTile(
-                            scan: scans[i],
-                            expanded: _expanded == i,
-                            onTap: () => setState(() =>
-                                _expanded = _expanded == i ? -1 : i),
-                          ),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.onSurface)),
+                        SizedBox(height: 8),
+                        Text(
+                          'Close the fridge door to trigger the first scan',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: AppColors.onSurfaceVariant),
                         ),
-                        childCount: scans.length,
-                      ),
+                      ],
                     ),
                   ),
-              ],
-            );
-          },
-        ),
+                )
+              else if (snap.connectionState == ConnectionState.waiting &&
+                  scans.isEmpty)
+                const SliverFillRemaining(
+                  child: Center(
+                    child: CircularProgressIndicator(
+                        color: AppColors.primary),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _ScanTile(
+                          scan: scans[i],
+                          expanded: _expanded == i,
+                          onTap: () => setState(() =>
+                              _expanded = _expanded == i ? -1 : i),
+                        ),
+                      ),
+                      childCount: scans.length,
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -116,11 +127,13 @@ class _ItemCountChart extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.card,
+        color: AppColors.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(16),
         boxShadow: const [
           BoxShadow(
-              color: AppColors.shadow, blurRadius: 12, offset: Offset(0, 4))
+              color: Color(0x0A000000),
+              blurRadius: 12,
+              offset: Offset(0, 4)),
         ],
       ),
       child: Column(
@@ -129,8 +142,8 @@ class _ItemCountChart extends StatelessWidget {
           Text('Items detected',
               style: Theme.of(context).textTheme.titleMedium),
           const Text('Last 8 scans',
-              style:
-                  TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              style: TextStyle(
+                  fontSize: 12, color: AppColors.onSurfaceVariant)),
           const SizedBox(height: 16),
           SizedBox(
             height: 130,
@@ -167,7 +180,6 @@ class _ItemCountChart extends StatelessWidget {
                           return const SizedBox();
                         }
                         final ts = data[i].timestamp;
-                        // Show HH:MM
                         final parts = ts.split(' ');
                         final time = parts.length > 1
                             ? parts[1].substring(0, 5)
@@ -177,7 +189,7 @@ class _ItemCountChart extends StatelessWidget {
                           child: Text(time,
                               style: const TextStyle(
                                   fontSize: 9,
-                                  color: AppColors.textSecondary)),
+                                  color: AppColors.onSurfaceVariant)),
                         );
                       },
                     ),
@@ -188,8 +200,8 @@ class _ItemCountChart extends StatelessWidget {
                   show: true,
                   drawVerticalLine: false,
                   horizontalInterval: 2,
-                  getDrawingHorizontalLine: (_) => const FlLine(
-                    color: AppColors.divider,
+                  getDrawingHorizontalLine: (_) => FlLine(
+                    color: AppColors.outlineVariant.withValues(alpha: 0.4),
                     strokeWidth: 1,
                   ),
                 ),
@@ -241,18 +253,17 @@ class _ScanTile extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         decoration: BoxDecoration(
-          color: AppColors.card,
+          color: AppColors.surfaceContainerLowest,
           borderRadius: BorderRadius.circular(14),
           boxShadow: const [
             BoxShadow(
-                color: AppColors.shadow,
+                color: Color(0x0A000000),
                 blurRadius: 8,
-                offset: Offset(0, 2))
+                offset: Offset(0, 2)),
           ],
         ),
         child: Column(
           children: [
-            // Row header
             Padding(
               padding: const EdgeInsets.all(14),
               child: Row(
@@ -276,13 +287,13 @@ class _ScanTile extends StatelessWidget {
                           style: const TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
-                              color: AppColors.text),
+                              color: AppColors.onSurface),
                         ),
                         Text(
                           '${scan.itemCount} item${scan.itemCount == 1 ? '' : 's'} detected',
                           style: const TextStyle(
                               fontSize: 12,
-                              color: AppColors.textSecondary),
+                              color: AppColors.onSurfaceVariant),
                         ),
                       ],
                     ),
@@ -291,15 +302,16 @@ class _ScanTile extends StatelessWidget {
                     expanded
                         ? Icons.expand_less_rounded
                         : Icons.expand_more_rounded,
-                    color: AppColors.textSecondary,
+                    color: AppColors.onSurfaceVariant,
                   ),
                 ],
               ),
             ),
 
-            // Expanded item chips
             if (expanded) ...[
-              const Divider(color: AppColors.divider, height: 1),
+              Divider(
+                  color: AppColors.outlineVariant.withValues(alpha: 0.5),
+                  height: 1),
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: Wrap(
@@ -310,23 +322,22 @@ class _ScanTile extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        color: AppColors.background,
+                        color: AppColors.surfaceContainerLow,
                         borderRadius: BorderRadius.circular(20),
-                        border:
-                            Border.all(color: AppColors.divider),
+                        border: Border.all(
+                            color: AppColors.outlineVariant
+                                .withValues(alpha: 0.4)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           ConfidenceBadge(
-                              confidence: item.confidence,
-                              compact: true),
+                              confidence: item.confidence, compact: true),
                           const SizedBox(width: 6),
                           Text(
                             '${item.displayName}  ·  ${item.quantity}',
                             style: const TextStyle(
-                                fontSize: 12,
-                                color: AppColors.text),
+                                fontSize: 12, color: AppColors.onSurface),
                           ),
                         ],
                       ),

@@ -8,11 +8,11 @@ class AppConfig {
   // Gemini AI — recipe recommendations (same key as SECRETS.h)
   static const String geminiApiKey = AppSecrets.geminiApiKey;
   static const String geminiEndpoint =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent';
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
-  // ESP32-CAM web server — phone must be on the same WiFi as the fridge
-  // Format: 'http://192.168.x.x'  (no trailing slash, no /latest.jpg)
-  static const String esp32CamBaseUrl = 'http://192.168.1.100';
+  // Image generation endpoint for food icons (Gemini image generation model)
+  static const String geminiImageEndpoint =
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent';
 
   // Must match FRIDGE_ID in parameters.h
   static const String fridgeId = 'fridge1';

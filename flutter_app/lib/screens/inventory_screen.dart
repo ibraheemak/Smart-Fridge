@@ -17,7 +17,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   String _filter = 'All';
   String _search = '';
 
-  final _filters = ['All', 'Fresh', 'Expiring Soon', 'Expired'];
+  final _filters = ['All', 'Fresh', 'Expiring Soon', 'Expired', 'No Date'];
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +33,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
             List<FridgeItem> items = inv?.items ?? [];
 
-            // Filter
+            // Search
             if (_search.isNotEmpty) {
               items = items
                   .where((i) => i.name
@@ -41,15 +41,26 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       .contains(_search.toLowerCase()))
                   .toList();
             }
+
+            // Filter by expiry status
             if (_filter == 'Fresh') {
-              items =
-                  items.where((i) => i.confidence == 'high').toList();
+              items = items
+                  .where((i) => i.expiryStatus == ExpiryStatus.ok)
+                  .toList();
             } else if (_filter == 'Expiring Soon') {
-              items =
-                  items.where((i) => i.confidence == 'medium').toList();
+              items = items
+                  .where((i) =>
+                      i.expiryStatus == ExpiryStatus.critical ||
+                      i.expiryStatus == ExpiryStatus.soon)
+                  .toList();
             } else if (_filter == 'Expired') {
-              items =
-                  items.where((i) => i.confidence == 'low').toList();
+              items = items
+                  .where((i) => i.expiryStatus == ExpiryStatus.expired)
+                  .toList();
+            } else if (_filter == 'No Date') {
+              items = items
+                  .where((i) => i.expiryStatus == ExpiryStatus.unknown)
+                  .toList();
             }
 
             return CustomScrollView(
@@ -66,11 +77,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     style: Theme.of(context).textTheme.headlineMedium,
                   ),
                   actions: [
-                    IconButton(
-                      onPressed: () {},
-                      icon: const Icon(Icons.notifications_outlined,
-                          color: AppColors.primary),
-                    ),
                     Padding(
                       padding: const EdgeInsets.only(right: 16),
                       child: CircleAvatar(
@@ -163,10 +169,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         // ── Expiry Alerts Banner ──────────────────────────
                         if (inv != null)
                           Builder(builder: (ctx) {
-                            final lowCount = inv.items
-                                .where((i) => i.confidence == 'low')
+                            final alertCount = inv.items
+                                .where((i) =>
+                                    i.expiryStatus == ExpiryStatus.expired ||
+                                    i.expiryStatus == ExpiryStatus.critical ||
+                                    i.expiryStatus == ExpiryStatus.soon)
                                 .length;
-                            if (lowCount == 0) return const SizedBox.shrink();
+                            if (alertCount == 0) return const SizedBox.shrink();
                             return GestureDetector(
                               onTap: () => Navigator.push(
                                   context,
@@ -186,7 +195,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        '$lowCount item${lowCount == 1 ? '' : 's'} need attention — check expiry',
+                                        '$alertCount item${alertCount == 1 ? '' : 's'} expiring soon — tap to view',
                                         style: const TextStyle(
                                             fontSize: 13,
                                             fontWeight: FontWeight.w600,
@@ -277,7 +286,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         crossAxisCount: 2,
                         mainAxisSpacing: 16,
                         crossAxisSpacing: 16,
-                        childAspectRatio: 0.75,
+                        childAspectRatio: 0.70,
                       ),
                       delegate: SliverChildBuilderDelegate(
                         (_, i) => _InventoryCard(item: items[i]),
@@ -300,35 +309,30 @@ class _InventoryCard extends StatelessWidget {
   const _InventoryCard({required this.item});
 
   Color get _borderColor {
-    switch (item.confidence) {
-      case 'high':
-        return AppColors.secondary;
-      case 'medium':
-        return AppColors.tertiaryFixedDim;
-      default:
+    switch (item.expiryStatus) {
+      case ExpiryStatus.expired:
+      case ExpiryStatus.critical:
         return AppColors.error;
+      case ExpiryStatus.soon:
+        return AppColors.tertiaryFixedDim;
+      case ExpiryStatus.ok:
+        return AppColors.secondary;
+      case ExpiryStatus.unknown:
+        return AppColors.outline;
     }
   }
 
-  String get _statusLabel {
-    switch (item.confidence) {
-      case 'high':
-        return 'Fresh';
-      case 'medium':
-        return 'Expiring Soon';
-      default:
-        return 'Check';
-    }
-  }
-
-  Color get _statusColor {
-    switch (item.confidence) {
-      case 'high':
-        return AppColors.secondary;
-      case 'medium':
-        return AppColors.tertiaryFixedDim;
-      default:
+  Color get _expiryLabelColor {
+    switch (item.expiryStatus) {
+      case ExpiryStatus.expired:
+      case ExpiryStatus.critical:
         return AppColors.error;
+      case ExpiryStatus.soon:
+        return AppColors.tertiaryFixedDim;
+      case ExpiryStatus.ok:
+        return AppColors.secondary;
+      case ExpiryStatus.unknown:
+        return AppColors.outline;
     }
   }
 
@@ -351,7 +355,7 @@ class _InventoryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Image — tries Firebase Storage, then generates with Gemini AI
+            // Image
             Expanded(
               child: LayoutBuilder(
                 builder: (_, constraints) => ItemIcon(
@@ -361,7 +365,7 @@ class _InventoryCard extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
 
             // Name
             Text(
@@ -372,28 +376,35 @@ class _InventoryCard extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
 
-            // Quantity + Status
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Qty: ${item.quantity}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+            // Quantity
+            Text(
+              'Qty: ${item.quantity}',
+              style: Theme.of(context).textTheme.bodyMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 5),
+
+            // Expiry badge
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                color: _borderColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                item.expiryLabel,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: _expiryLabelColor,
                 ),
-                Text(
-                  _statusLabel,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: _statusColor,
-                  ),
-                ),
-              ],
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ],
         ),

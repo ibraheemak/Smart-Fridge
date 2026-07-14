@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
@@ -22,7 +21,6 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen> {
   int _roof = 1;
   bool _requesting = false;
-  bool _scanning = false;
   String _error = '';
   Timer? _timeoutTimer;
 
@@ -76,35 +74,6 @@ class _CameraScreenState extends State<CameraScreen> {
     _requestSnapshot();
   }
 
-  Future<void> _runAiScan() async {
-    if (_scanning) return;
-    setState(() => _scanning = true);
-    try {
-      await http
-          .get(Uri.parse('${AppConfig.esp32CamBaseUrl}/scan'))
-          .timeout(const Duration(seconds: 30));
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('AI scan triggered! Updating inventory...'),
-            backgroundColor: AppColors.secondary,
-          ),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Cannot reach ESP32-CAM to trigger scan.'),
-            backgroundColor: AppColors.error,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _scanning = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -119,6 +88,11 @@ class _CameraScreenState extends State<CameraScreen> {
               const SizedBox(height: 8),
               Row(
                 children: [
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.arrow_back_rounded,
+                        color: AppColors.onSurface),
+                  ),
                   Text('Live View',
                       style: Theme.of(context).textTheme.headlineMedium),
                   const Spacer(),
@@ -161,8 +135,6 @@ class _CameraScreenState extends State<CameraScreen> {
                   builder: (context, snap) {
                     final photo = snap.data?.photo;
                     if (snap.hasData) {
-                      // Defer to after this build so we don't call setState
-                      // while the widget tree is still building.
                       WidgetsBinding.instance
                           .addPostFrameCallback((_) => _onPhotoArrived());
                     }
@@ -213,7 +185,6 @@ class _CameraScreenState extends State<CameraScreen> {
                                   ),
                           ),
 
-                          // LIVE badge (when a photo is loaded)
                           if (photo != null)
                             Positioned(
                               top: 12,
@@ -271,48 +242,25 @@ class _CameraScreenState extends State<CameraScreen> {
 
               const SizedBox(height: 14),
 
-              // Buttons row
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _requesting ? null : _requestSnapshot,
-                      icon: _requesting
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.refresh_rounded),
-                      label: const Text('Refresh'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                    ),
+              // Refresh button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _requesting ? null : _requestSnapshot,
+                  icon: _requesting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.refresh_rounded),
+                  label: const Text('Refresh Photo'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _scanning ? null : _runAiScan,
-                      icon: _scanning
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.auto_awesome_rounded),
-                      label: Text(_scanning ? 'Scanning...' : 'Run AI Scan'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.secondary,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
 
               const SizedBox(height: 16),
@@ -346,9 +294,9 @@ class _CameraScreenState extends State<CameraScreen> {
                                 child: _InsightCard(
                                   icon: Icons.eco_rounded,
                                   color: AppColors.secondary,
-                                  title: 'Freshness',
+                                  title: 'Scan Quality',
                                   value: '$freshPct%',
-                                  subtitle: 'items are fresh',
+                                  subtitle: 'items clearly detected',
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -384,7 +332,7 @@ class _CameraScreenState extends State<CameraScreen> {
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      'Low: ${low.map((i) => i.displayName).join(', ')}',
+                                      'Uncertain detection: ${low.map((i) => i.displayName).join(', ')}',
                                       style: const TextStyle(
                                           fontSize: 12,
                                           color: AppColors.error,

@@ -1,7 +1,6 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import '../config.dart';
 import '../models/fridge_item.dart';
 import '../models/scan_record.dart';
 import '../services/auth_service.dart';
@@ -21,30 +20,38 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  Uint8List? _liveImage;
-  bool _liveLoading = false;
+  bool _liveRequesting = false;
+  Timer? _liveTimeout;
 
   @override
   void initState() {
     super.initState();
-    _fetchLiveImage();
+    _requestLiveView();
   }
 
-  Future<void> _fetchLiveImage() async {
-    if (_liveLoading) return;
-    setState(() => _liveLoading = true);
+  @override
+  void dispose() {
+    _liveTimeout?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _requestLiveView() async {
+    if (_liveRequesting) return;
+    _liveTimeout?.cancel();
+    setState(() => _liveRequesting = true);
     try {
-      final res = await http
-          .get(Uri.parse('${AppConfig.esp32CamBaseUrl}/latest.jpg'))
-          .timeout(const Duration(seconds: 6));
-      if (res.statusCode == 200 && mounted) {
-        setState(() => _liveImage = res.bodyBytes);
-      }
+      await FridgeService.requestLiveViewSnapshot(1);
+      _liveTimeout = Timer(const Duration(seconds: 12), () {
+        if (mounted && _liveRequesting) setState(() => _liveRequesting = false);
+      });
     } catch (_) {
-      // Silently ignore — live view just stays blank
-    } finally {
-      if (mounted) setState(() => _liveLoading = false);
+      if (mounted) setState(() => _liveRequesting = false);
     }
+  }
+
+  void _onLivePhotoArrived() {
+    _liveTimeout?.cancel();
+    if (mounted && _liveRequesting) setState(() => _liveRequesting = false);
   }
 
   @override
@@ -66,12 +73,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               actions: [
-                IconButton(
-                  onPressed: () {},
-                  icon: const Icon(Icons.notifications_outlined,
-                      color: AppColors.primary),
-                ),
-                const SizedBox(width: 4),
                 Padding(
                   padding: const EdgeInsets.only(right: 16),
                   child: CircleAvatar(
@@ -113,17 +114,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // ── Status Cards Row (horizontal scroll) ────────────────
+                    // ── Status Cards Row ────────────────────────────────────
                     _StatusCardsRow(),
                     const SizedBox(height: 20),
 
-                    // ── Live Fridge View ────────────────────────────────────
+                    // ── Live Fridge Card ────────────────────────────────────
                     _LiveFridgeCard(
-                      imageBytes: _liveImage,
-                      loading: _liveLoading,
+                      requesting: _liveRequesting,
+                      onPhotoArrived: _onLivePhotoArrived,
+                      onRefresh: _requestLiveView,
                       onTap: () => Navigator.push(context,
                           MaterialPageRoute(builder: (_) => const CameraScreen())),
-                      onRefresh: _fetchLiveImage,
                     ),
                     const SizedBox(height: 20),
 
@@ -136,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     _QuickActionsGrid(onNavigate: widget.onNavigate),
                     const SizedBox(height: 20),
 
-                    // ── Recent Activity ────────────────────────────────────
+                    // ── Recent Activity ─────────────────────────────────────
                     _RecentActivity(),
                     const SizedBox(height: 24),
                   ],
@@ -162,76 +163,78 @@ class _StatusCardsRow extends StatelessWidget {
           return StreamBuilder<DoorStatus?>(
             stream: FridgeService.doorStream(),
             builder: (ctx, doorSnap) {
-          return StreamBuilder<InventorySnapshot?>(
-            stream: FridgeService.inventoryStream(),
-            builder: (ctx, invSnap) {
-              final temp = tempSnap.data;
-              final door = doorSnap.data;
-              final inv = invSnap.data;
-              final total = inv?.items.length ?? 0;
-              final low = inv?.items
-                      .where((i) => i.confidence == 'low')
-                      .length ??
-                  0;
+              return StreamBuilder<InventorySnapshot?>(
+                stream: FridgeService.inventoryStream(),
+                builder: (ctx, invSnap) {
+                  final temp = tempSnap.data;
+                  final door = doorSnap.data;
+                  final inv = invSnap.data;
+                  final total = inv?.items.length ?? 0;
+                  final expiringCount = inv?.items.where((i) {
+                    final s = i.expiryStatus;
+                    return s == ExpiryStatus.expired ||
+                        s == ExpiryStatus.critical ||
+                        s == ExpiryStatus.soon;
+                  }).length ?? 0;
 
-              return ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _StatusCard(
-                    icon: Icons.thermostat_rounded,
-                    label: 'Temperature',
-                    value: temp?.temperatureC != null
-                        ? '${temp!.temperatureC!.toStringAsFixed(1)}°C'
-                        : '—',
-                    status: temp == null
-                        ? _CardStatus.neutral
-                        : temp.isOk
-                            ? _CardStatus.ok
-                            : _CardStatus.alert,
-                    onTap: () => Navigator.push(ctx,
-                        MaterialPageRoute(
-                            builder: (_) => const TemperatureScreen())),
-                  ),
-                  const SizedBox(width: 12),
-                  _StatusCard(
-                    icon: Icons.door_front_door_rounded,
-                    label: 'Door',
-                    value: door == null
-                        ? '—'
-                        : door.isOpen
-                            ? 'Open'
-                            : 'Closed',
-                    status: door == null
-                        ? _CardStatus.neutral
-                        : door.isOpen
-                            ? _CardStatus.alert
-                            : _CardStatus.ok,
-                    onTap: () => Navigator.push(ctx,
-                        MaterialPageRoute(
-                            builder: (_) => const TemperatureScreen())),
-                  ),
-                  const SizedBox(width: 12),
-                  _StatusCard(
-                    icon: Icons.priority_high_rounded,
-                    label: 'Expiring',
-                    value: low > 0 ? '$low items' : 'None',
-                    status: low > 0 ? _CardStatus.alert : _CardStatus.ok,
-                    onTap: () => Navigator.push(ctx,
-                        MaterialPageRoute(
-                            builder: (_) => const ExpiryScreen())),
-                  ),
-                  const SizedBox(width: 12),
-                  _StatusCard(
-                    icon: Icons.inventory_2_rounded,
-                    label: 'Total',
-                    value: '$total items',
-                    status: _CardStatus.neutral,
-                  ),
-                  const SizedBox(width: 4),
-                ],
+                  return ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      _StatusCard(
+                        icon: Icons.thermostat_rounded,
+                        label: 'Temperature',
+                        value: temp?.temperatureC != null
+                            ? '${temp!.temperatureC!.toStringAsFixed(1)}°C'
+                            : '—',
+                        status: temp == null
+                            ? _CardStatus.neutral
+                            : temp.isOk
+                                ? _CardStatus.ok
+                                : _CardStatus.alert,
+                        onTap: () => Navigator.push(ctx,
+                            MaterialPageRoute(
+                                builder: (_) => const TemperatureScreen())),
+                      ),
+                      const SizedBox(width: 12),
+                      _StatusCard(
+                        icon: Icons.door_front_door_rounded,
+                        label: 'Door',
+                        value: door == null
+                            ? '—'
+                            : door.isOpen
+                                ? 'Open'
+                                : 'Closed',
+                        status: door == null
+                            ? _CardStatus.neutral
+                            : door.isOpen
+                                ? _CardStatus.alert
+                                : _CardStatus.ok,
+                        onTap: () => Navigator.push(ctx,
+                            MaterialPageRoute(
+                                builder: (_) => const TemperatureScreen())),
+                      ),
+                      const SizedBox(width: 12),
+                      _StatusCard(
+                        icon: Icons.priority_high_rounded,
+                        label: 'Expiring',
+                        value: expiringCount > 0 ? '$expiringCount items' : 'None',
+                        status: expiringCount > 0 ? _CardStatus.alert : _CardStatus.ok,
+                        onTap: () => Navigator.push(ctx,
+                            MaterialPageRoute(
+                                builder: (_) => const ExpiryScreen())),
+                      ),
+                      const SizedBox(width: 12),
+                      _StatusCard(
+                        icon: Icons.inventory_2_rounded,
+                        label: 'Total',
+                        value: '$total items',
+                        status: _CardStatus.neutral,
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                  );
+                },
               );
-            },
-          );
             },
           );
         },
@@ -284,43 +287,43 @@ class _StatusCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-      width: 130,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(16),
-        border: Border(top: BorderSide(color: _borderColor, width: 4)),
-        boxShadow: const [
-          BoxShadow(color: Color(0x0A000000), blurRadius: 8, offset: Offset(0, 2)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Icon(icon, color: _iconColor, size: 28),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            style: Theme.of(context)
-                .textTheme
-                .labelLarge
-                ?.copyWith(color: AppColors.onSurfaceVariant),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: _iconColor,
+        width: 130,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(16),
+          border: Border(top: BorderSide(color: _borderColor, width: 4)),
+          boxShadow: const [
+            BoxShadow(color: Color(0x0A000000), blurRadius: 8, offset: Offset(0, 2)),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(icon, color: _iconColor, size: 28),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: Theme.of(context)
+                  .textTheme
+                  .labelLarge
+                  ?.copyWith(color: AppColors.onSurfaceVariant),
+              textAlign: TextAlign.center,
             ),
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: _iconColor,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -328,151 +331,161 @@ class _StatusCard extends StatelessWidget {
 
 // ── Live Fridge Card ──────────────────────────────────────────────────────────
 class _LiveFridgeCard extends StatelessWidget {
-  final Uint8List? imageBytes;
-  final bool loading;
+  final bool requesting;
+  final VoidCallback onPhotoArrived;
   final VoidCallback onTap;
   final VoidCallback onRefresh;
 
   const _LiveFridgeCard({
-    required this.imageBytes,
-    required this.loading,
+    required this.requesting,
+    required this.onPhotoArrived,
     required this.onTap,
     required this.onRefresh,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: SizedBox(
-          height: 180,
-          width: double.infinity,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // Background
-              imageBytes != null
-                  ? Image.memory(imageBytes!, fit: BoxFit.cover)
-                  : Container(
-                      color: AppColors.surfaceContainerHighest,
-                      child: Icon(
-                        Icons.videocam_rounded,
-                        size: 64,
-                        color: AppColors.outline,
-                      ),
-                    ),
+    return StreamBuilder<({Uint8List? photo, String? capturedAt})>(
+      stream: FridgeService.liveViewPhotoStream(1),
+      builder: (_, snap) {
+        final photo = snap.data?.photo;
+        if (snap.hasData && photo != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => onPhotoArrived());
+        }
 
-              // Gradient overlay
-              Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Color(0x99000000)],
-                    stops: [0.4, 1.0],
-                  ),
-                ),
-              ),
-
-              // Labels
-              Positioned(
-                bottom: 14,
-                left: 16,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'INSIDE VIEW',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    const Text(
-                      'Live Camera Feed',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // LIVE badge
-              Positioned(
-                top: 12,
-                right: 12,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: AppColors.error,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
+        return GestureDetector(
+          onTap: onTap,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: SizedBox(
+              height: 180,
+              width: double.infinity,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Background
+                  photo != null
+                      ? Image.memory(photo, fit: BoxFit.cover)
+                      : Container(
+                          color: AppColors.surfaceContainerHighest,
+                          child: Icon(
+                            Icons.videocam_rounded,
+                            size: 64,
+                            color: AppColors.outline,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 5),
-                      const Text(
-                        'LIVE',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
 
-              // Refresh button
-              Positioned(
-                top: 8,
-                left: 8,
-                child: Material(
-                  color: Colors.black38,
-                  borderRadius: BorderRadius.circular(20),
-                  child: InkWell(
-                    onTap: onRefresh,
-                    borderRadius: BorderRadius.circular(20),
-                    child: Padding(
-                      padding: const EdgeInsets.all(6),
-                      child: loading
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
+                  // Gradient overlay
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Color(0x99000000)],
+                        stops: [0.4, 1.0],
+                      ),
+                    ),
+                  ),
+
+                  // Labels
+                  Positioned(
+                    bottom: 14,
+                    left: 16,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'INSIDE VIEW',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'Live Camera Feed',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // LIVE badge
+                  if (photo != null)
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: AppColors.error,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
                                 color: Colors.white,
+                                shape: BoxShape.circle,
                               ),
-                            )
-                          : const Icon(Icons.refresh_rounded,
-                              color: Colors.white, size: 18),
+                            ),
+                            const SizedBox(width: 5),
+                            const Text(
+                              'LIVE',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                  // Refresh button
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Material(
+                      color: Colors.black38,
+                      borderRadius: BorderRadius.circular(20),
+                      child: InkWell(
+                        onTap: onRefresh,
+                        borderRadius: BorderRadius.circular(20),
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: requesting
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.refresh_rounded,
+                                  color: Colors.white, size: 18),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
