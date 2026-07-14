@@ -43,6 +43,12 @@ StatsLayout computeStatsLayout();
 extern int g_bought_count;
 extern int g_stats_scroll;
 
+// Defined in inventory_merge.h (included before this file) — removes one unit
+// of an item from its source roof doc so a manual delete isn't restored by the
+// next mergeRoofInventories() re-sum. Forward-declared so this file doesn't
+// depend on include order.
+bool decrementItemInRoofs(const String& name);
+
 // Defined in gm65.h, included after this file — forward-declared here since
 // handleTouch() needs to arm a barcode scan on tap of the footer "Scan" button.
 void triggerGM65Scan();
@@ -153,6 +159,14 @@ BtnRect btnDayMinus, btnDayPlus, btnMonMinus, btnMonPlus, btnYearMinus, btnYearP
 BtnRect btnSave;
 BtnRect btnEnterExpiry, btnSkip;  // VIEW_NEW_ITEM notification screen
 BtnRect btnUnitPrev, btnUnitNext; // VIEW_DETAIL — step between units of the same item
+BtnRect btnDelete;                // VIEW_DETAIL — remove the shown unit (header, top-right)
+BtnRect btnDeleteHit;             // larger invisible touch zone (top edge is inaccurate)
+
+// Deleting inventory is destructive and the top-right corner is easy to brush,
+// so the Delete button is two-tap: the first tap "arms" it (turns red, label
+// changes to "Sure?"), a second tap confirms. Any other tap on the detail page
+// disarms it. Reset every time the detail page is (re)opened.
+bool g_delete_armed = false;
 
 void drawBtn(BtnRect b, const String& label, uint16_t color) {
   tft.fillRoundRect(b.x, b.y, b.w, b.h, 6, color);
@@ -182,6 +196,15 @@ void layoutDetailButtons() {
   // worry about overlapping with.
   btnBackHit = {0, 0, 160, 140};
 
+  // Delete button — top-right of the header, opposite "< Back". Clear of the
+  // centred "Item Details" title (which spans the middle of the header).
+  int delW = 92;
+  btnDelete    = {w - 8 - delW, 6, delW, HEADER_HEIGHT_PX - 12};
+  // Touch reads inaccurately near the top edge, so hit-test a much larger
+  // top-right zone (mirrors btnBackHit on the opposite corner). Nothing else
+  // interactive lives in the top-right 140px of the detail page.
+  btnDeleteHit = {w - 160, 0, 160, 140};
+
   int bw = 44, bh = 44;
   const int GROUP_GAP_PX = 12;
   int groupW = (w - 2 * GROUP_GAP_PX) / 3;
@@ -206,6 +229,14 @@ void layoutDetailButtons() {
   int nav_y = y + 80, nav_w = 90, nav_h = 44;
   btnUnitPrev = {8,              nav_y, nav_w, nav_h};
   btnUnitNext = {w - 8 - nav_w,  nav_y, nav_w, nav_h};
+}
+
+// Draws the header Delete button in its current arm state. Split out so the
+// two-tap arm/disarm can repaint just this button without redrawing the whole
+// detail page. 0x8000 = maroon (idle), TFT_RED = armed/confirm.
+void drawDeleteButton() {
+  if (g_delete_armed) drawBtn(btnDelete, "Sure?",  TFT_RED);
+  else                drawBtn(btnDelete, "Delete", 0x8000);
 }
 
 // How many physical units of this item there are — one expiry slot per unit.
@@ -294,6 +325,7 @@ void drawItemDetail(int idx) {
 
   layoutDetailButtons();
   drawBtn(btnBack, "< Back", TFT_DARKGREY);
+  drawDeleteButton();
 
   int icon_x = SIDE_PADDING_PX;
   int icon_y = HEADER_HEIGHT_PX + 16;
@@ -416,6 +448,7 @@ void processNextPending() {
 void openItemDetail(int idx, int expiry_idx = -1) {
   g_detail_index = idx;
   g_view = VIEW_DETAIL;
+  g_delete_armed = false;  // start disarmed every time the page opens
 
   InventoryItem& it = g_items[idx];
 
@@ -539,6 +572,56 @@ void saveExpiry() {
     g_view = VIEW_LIST;
     renderInventory();
   }
+}
+
+// ----------------------------------------------------------------------------
+// Manual delete — removes the currently-shown unit of this item.
+//
+// Drops that unit's expiry slot, decrements the item's quantity, and removes
+// the item entirely when its last unit goes. Decrements the source roof doc
+// first (see decrementItemInRoofs) so the next mergeRoofInventories() re-sum
+// doesn't restore the unit; then writes the updated /current so the display and
+// phone app reflect the delete immediately. Items that live only in /current
+// (GM65 barcode adds) aren't on any roof — decrementItemInRoofs() no-ops for
+// them and the /current write alone is authoritative.
+// ----------------------------------------------------------------------------
+void deleteCurrentUnit() {
+  g_delete_armed = false;
+  InventoryItem& it = g_items[g_detail_index];
+  String name = it.name;
+
+  int slot = currentExpiryIndex();
+
+  // Drop this unit's expiry slot (shift the rest down).
+  if (slot >= 0 && slot < it.expiry_count) {
+    for (int i = slot; i < it.expiry_count - 1; i++)
+      it.expiries[i] = it.expiries[i + 1];
+    it.expiries[--it.expiry_count] = "";
+  }
+
+  int qty = it.quantity.toInt();
+  if (qty <= 0) qty = it.expiry_count + 1;  // fall back if quantity wasn't numeric
+  qty--;
+
+  drawFooter("Deleting unit...");
+
+  if (qty <= 0) {
+    // Last unit removed — drop the whole item from g_items.
+    for (int i = g_detail_index; i < g_item_count - 1; i++)
+      g_items[i] = g_items[i + 1];
+    g_item_count--;
+  } else {
+    it.quantity = String(qty);
+  }
+
+  // Keep the source roof doc in sync so the merge doesn't undo this.
+  decrementItemInRoofs(name);
+
+  // Write the updated inventory to /current (also bumps the RTDB doorbell).
+  persistItemsToFirestore();
+
+  g_view = VIEW_LIST;
+  renderInventory();
 }
 
 // ----------------------------------------------------------------------------
@@ -722,6 +805,17 @@ void handleTouch() {
   }
 
   // VIEW_DETAIL
+
+  // Delete button (header, top-right) — two-tap: first tap arms, second
+  // confirms. Checked before btnBackHit so its own hit zone isn't swallowed.
+  if (inBtn(btnDeleteHit, tx, ty)) {
+    if (g_delete_armed) deleteCurrentUnit();
+    else { g_delete_armed = true; drawDeleteButton(); }
+    return;
+  }
+  // Any other tap on the detail page disarms a pending delete.
+  if (g_delete_armed) { g_delete_armed = false; drawDeleteButton(); }
+
   if (inBtn(btnBackHit, tx, ty))   { g_view = VIEW_LIST; renderInventory(); return; }
 
   // Unit navigation — step to the previous/next unit of this item and load
