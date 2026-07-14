@@ -68,10 +68,32 @@ void openNotificationsScreen();
 void handleNotificationsTouch(int x, int y);
 void handleNotifSettingsTouch(int x, int y);
 
+// Defined in recipes.h, included after this file — Gemini-based recipe
+// suggestions screen (US #7) opened from the home "RECIPES" tile.
+void openRecipesScreen();
+void handleRecipesTouch(int x, int y);
+void handleRecipeDetailTouch(int x, int y);
+void drawRecipeDetail(int idx);
+void renderRecipesScreen();
+struct RecipesLayout {
+  int  top, bottom;
+  bool show_up;
+  int  up_y;
+  int  rows_y0;
+  int  rows_visible;
+  bool show_down;
+  int  down_y;
+  int  page_step;
+};
+RecipesLayout computeRecipesLayout();
+extern int g_recipe_count;
+extern int g_recipes_scroll;
+extern int g_recipe_detail_index;
+
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_BUZZER, VIEW_ALERT, VIEW_LIVE, VIEW_NOTIFICATIONS, VIEW_NOTIF_SETTINGS };
+enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_BUZZER, VIEW_ALERT, VIEW_LIVE, VIEW_NOTIFICATIONS, VIEW_NOTIF_SETTINGS, VIEW_RECIPES, VIEW_RECIPE_DETAIL };
 
 ViewState     g_view          = VIEW_HOME;
 int           g_detail_index  = -1;
@@ -587,6 +609,10 @@ void handleTouch() {
   if (g_view == VIEW_NOTIFICATIONS)  { handleNotificationsTouch(tx, ty); return; }
   if (g_view == VIEW_NOTIF_SETTINGS) { handleNotifSettingsTouch(tx, ty); return; }
 
+  // VIEW_RECIPES / VIEW_RECIPE_DETAIL — Gemini recipe suggestions (US #7).
+  if (g_view == VIEW_RECIPES)       { handleRecipesTouch(tx, ty); return; }
+  if (g_view == VIEW_RECIPE_DETAIL) { handleRecipeDetailTouch(tx, ty); return; }
+
   // VIEW_HOME — large tile buttons
   if (g_view == VIEW_HOME) {
     // Top-left "Settings" button. Touch readings are unreliable near the top
@@ -614,6 +640,8 @@ void handleTouch() {
       openLiveViewScreen();
     } else if (inTile(g_home_tiles[HOME_TILE_NOTIF], tx, ty)) {
       openNotificationsScreen();
+    } else if (inTile(g_home_tiles[HOME_TILE_RECIPES], tx, ty)) {
+      openRecipesScreen();
     }
     return;
   }

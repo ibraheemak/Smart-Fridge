@@ -13,6 +13,7 @@
  *   tft_setup.h   — TFT_eSPI pin config (auto-loaded by the library)
  *   SECRETS.h     — Firebase credentials
  *   gm65.h        — GM65 barcode scanner -> Open Food Facts -> inventory
+ *   recipes.h     — Gemini recipe suggestions from current inventory (US #7)
  *   rtdb_notify.h — bumps the RTDB "inventory changed" doorbell after a write
  *   rtdb_stream.h — listens on that doorbell to trigger an instant re-fetch
  */
@@ -39,6 +40,7 @@
 #include "liveview.h"
 #include "notifications.h"
 #include "gm65.h"
+#include "recipes.h"
 #include "rtdb_stream.h"
 
 // ============================================================================

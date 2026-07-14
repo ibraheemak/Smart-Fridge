@@ -154,6 +154,13 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
 #define TOUCH_PRESSURE_THRESHOLD  200   // lower = lighter taps register (TFT_eSPI default is 600)
 
 // ----------------------------------------------------------------------------
+// RECIPE RECOMMENDATIONS (US #7) — Gemini text prompt over current inventory
+// ----------------------------------------------------------------------------
+#define GEMINI_RECIPES_TIMEOUT_MS  20000  // shorter than the CAM's image-analysis timeout — text-only prompt
+#define MAX_RECIPES                  3
+#define RECIPE_ROW_H                 60
+
+// ----------------------------------------------------------------------------
 // FIREBASE STORAGE — item icons
 // ----------------------------------------------------------------------------
 #define FIREBASE_STORAGE_BUCKET  "smartfridge-79217.firebasestorage.app"

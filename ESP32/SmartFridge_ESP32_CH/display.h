@@ -453,9 +453,10 @@ float g_humidity  = -1.0f;
 #define HOME_TILE_STATS      2
 #define HOME_TILE_LIVE       3
 #define HOME_TILE_NOTIF      4
+#define HOME_TILE_RECIPES    5
 
 struct HomeTile { int x, y, w, h; };
-HomeTile g_home_tiles[5];
+HomeTile g_home_tiles[6];
 
 // Total notification count — defined in notifications.h (included after this
 // file). Declared here so the home ALERTS tile can show it as a sub-label.
@@ -637,6 +638,7 @@ void renderHomeScreen() {
   g_home_tiles[HOME_TILE_STATS]     = {col0, row1, colW, rowH};
   g_home_tiles[HOME_TILE_LIVE]      = {col1, row1, colW, rowH};
   g_home_tiles[HOME_TILE_NOTIF]     = {col0, row2, colW, rowH};
+  g_home_tiles[HOME_TILE_RECIPES]   = {col1, row2, colW, rowH};
 
   char inv_sub[20];
   snprintf(inv_sub, sizeof(inv_sub), "%d items", g_item_count);
@@ -655,14 +657,8 @@ void renderHomeScreen() {
                "()", "LIVE VIEW", "Camera feed", 0x2009, 0xFD59 /* light pink */);
   drawHomeTile(g_home_tiles[HOME_TILE_NOTIF],
                "!", "ALERTS", notif_sub, 0x5000, TFT_YELLOW);
-
-  // Empty bottom-right — subtle placeholder
-  tft.fillRoundRect(col1 + 4, row2 + 4, colW - 8, rowH - 8, 12, 0x0841);
-  tft.drawRoundRect(col1 + 4, row2 + 4, colW - 8, rowH - 8, 12, 0x2104);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(0x2104, 0x0841);
-  tft.setTextSize(1);
-  tft.drawString("Coming soon", col1 + colW / 2, row2 + rowH / 2);
+  drawHomeTile(g_home_tiles[HOME_TILE_RECIPES],
+               "{}", "RECIPES", "What can I make?", 0x2960, TFT_GREENYELLOW);
 }
 
 // ============================================================================
