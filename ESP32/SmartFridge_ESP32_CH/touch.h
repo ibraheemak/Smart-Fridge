@@ -43,6 +43,12 @@ StatsLayout computeStatsLayout();
 extern int g_bought_count;
 extern int g_stats_scroll;
 
+// Defined in inventory_merge.h (included before this file) — removes one unit
+// of an item from its source roof doc so a manual delete isn't restored by the
+// next mergeRoofInventories() re-sum. Forward-declared so this file doesn't
+// depend on include order.
+bool decrementItemInRoofs(const String& name);
+
 // Defined in gm65.h, included after this file — forward-declared here since
 // handleTouch() needs to arm a barcode scan on tap of the footer "Scan" button.
 void triggerGM65Scan();
@@ -154,7 +160,7 @@ uint16_t g_cal_data[5];
 // Bump this key whenever the touch wiring/rotation changes, or to discard a
 // stale calibration saved before TOUCH_CS was wired into the active TFT_eSPI
 // config (those old values were garbage and would otherwise be reused).
-#define TOUCH_CAL_KEY "cal_v6"
+#define TOUCH_CAL_KEY "cal_v7"
 
 void initTouch() {
   Preferences prefs;
@@ -190,6 +196,13 @@ BtnRect btnDayMinus, btnDayPlus, btnMonMinus, btnMonPlus, btnYearMinus, btnYearP
 BtnRect btnSave;
 BtnRect btnEnterExpiry, btnSkip;  // VIEW_NEW_ITEM notification screen
 BtnRect btnUnitPrev, btnUnitNext; // VIEW_DETAIL — step between units of the same item
+BtnRect btnDelete;                // VIEW_DETAIL — remove the shown unit (beside Save)
+
+// Deleting inventory is destructive and the top-right corner is easy to brush,
+// so the Delete button is two-tap: the first tap "arms" it (turns red, label
+// changes to "Sure?"), a second tap confirms. Any other tap on the detail page
+// disarms it. Reset every time the detail page is (re)opened.
+bool g_delete_armed = false;
 
 void drawBtn(BtnRect b, const String& label, uint16_t color) {
   tft.fillRoundRect(b.x, b.y, b.w, b.h, 6, color);
@@ -235,14 +248,27 @@ void layoutDetailButtons() {
   btnYearMinus = {g2,               y, bw, bh};
   btnYearPlus  = {g2 + groupW - bw, y, bw, bh};
 
-  btnSave = {(w - 140) / 2, y + 80, 140, 44};
+  // Save and Delete sit side by side, centred as one group on the bottom row.
+  int btn_y = y + 80, btn_w = 110, btn_h = 44;
+  const int SAVE_DEL_GAP_PX = 12;
+  int groupTotalW = 2 * btn_w + SAVE_DEL_GAP_PX;
+  int group_x0 = (w - groupTotalW) / 2;
+  btnSave   = {group_x0,                        btn_y, btn_w, btn_h};
+  btnDelete = {group_x0 + btn_w + SAVE_DEL_GAP_PX, btn_y, btn_w, btn_h};
 
-  // Unit prev/next arrows flank the centred Save button on the bottom row.
-  // Save spans x=(w-140)/2 .. +140 (170..310 at w=480), so these sit clear of
-  // it in the left/right margins.
-  int nav_y = y + 80, nav_w = 90, nav_h = 44;
+  // Unit prev/next arrows flank the Save/Delete group on the bottom row, in
+  // the left/right margins clear of it.
+  int nav_y = btn_y, nav_w = 90, nav_h = 44;
   btnUnitPrev = {8,              nav_y, nav_w, nav_h};
   btnUnitNext = {w - 8 - nav_w,  nav_y, nav_w, nav_h};
+}
+
+// Draws the Delete button in its current arm state. Split out so the
+// two-tap arm/disarm can repaint just this button without redrawing the whole
+// detail page. 0x8000 = maroon (idle), TFT_RED = armed/confirm.
+void drawDeleteButton() {
+  if (g_delete_armed) drawBtn(btnDelete, "Sure?",  TFT_RED);
+  else                drawBtn(btnDelete, "Delete", 0x8000);
 }
 
 // How many physical units of this item there are — one expiry slot per unit.
@@ -369,10 +395,11 @@ void drawItemDetail(int idx) {
   drawExpiryDate();
 
   drawBtn(btnSave, "Save", TFT_DARKGREEN);
+  drawDeleteButton();
 
-  // With several units, show left/right arrows flanking Save so the user can
-  // step through each unit and set its own expiry date. The "Unit X / N" label
-  // above tracks which unit is currently shown.
+  // With several units, show left/right arrows flanking the Save/Delete group
+  // so the user can step through each unit and set its own expiry date. The
+  // "Unit X / N" label above tracks which unit is currently shown.
   if (unit_count > 1) {
     drawBtn(btnUnitPrev, "< Prev", TFT_NAVY);
     drawBtn(btnUnitNext, "Next >", TFT_NAVY);
@@ -453,6 +480,7 @@ void processNextPending() {
 void openItemDetail(int idx, int expiry_idx = -1) {
   g_detail_index = idx;
   g_view = VIEW_DETAIL;
+  g_delete_armed = false;  // start disarmed every time the page opens
 
   InventoryItem& it = g_items[idx];
 
@@ -577,6 +605,56 @@ void saveExpiry() {
     g_view = VIEW_LIST;
     renderInventory();
   }
+}
+
+// ----------------------------------------------------------------------------
+// Manual delete — removes the currently-shown unit of this item.
+//
+// Drops that unit's expiry slot, decrements the item's quantity, and removes
+// the item entirely when its last unit goes. Decrements the source roof doc
+// first (see decrementItemInRoofs) so the next mergeRoofInventories() re-sum
+// doesn't restore the unit; then writes the updated /current so the display and
+// phone app reflect the delete immediately. Items that live only in /current
+// (GM65 barcode adds) aren't on any roof — decrementItemInRoofs() no-ops for
+// them and the /current write alone is authoritative.
+// ----------------------------------------------------------------------------
+void deleteCurrentUnit() {
+  g_delete_armed = false;
+  InventoryItem& it = g_items[g_detail_index];
+  String name = it.name;
+
+  int slot = currentExpiryIndex();
+
+  // Drop this unit's expiry slot (shift the rest down).
+  if (slot >= 0 && slot < it.expiry_count) {
+    for (int i = slot; i < it.expiry_count - 1; i++)
+      it.expiries[i] = it.expiries[i + 1];
+    it.expiries[--it.expiry_count] = "";
+  }
+
+  int qty = it.quantity.toInt();
+  if (qty <= 0) qty = it.expiry_count + 1;  // fall back if quantity wasn't numeric
+  qty--;
+
+  drawFooter("Deleting unit...");
+
+  if (qty <= 0) {
+    // Last unit removed — drop the whole item from g_items.
+    for (int i = g_detail_index; i < g_item_count - 1; i++)
+      g_items[i] = g_items[i + 1];
+    g_item_count--;
+  } else {
+    it.quantity = String(qty);
+  }
+
+  // Keep the source roof doc in sync so the merge doesn't undo this.
+  decrementItemInRoofs(name);
+
+  // Write the updated inventory to /current (also bumps the RTDB doorbell).
+  persistItemsToFirestore();
+
+  g_view = VIEW_LIST;
+  renderInventory();
 }
 
 // ----------------------------------------------------------------------------
@@ -777,6 +855,16 @@ void handleTouch() {
   }
 
   // VIEW_DETAIL
+
+  // Delete button (beside Save) — two-tap: first tap arms, second confirms.
+  if (inBtn(btnDelete, tx, ty)) {
+    if (g_delete_armed) deleteCurrentUnit();
+    else { g_delete_armed = true; drawDeleteButton(); }
+    return;
+  }
+  // Any other tap on the detail page disarms a pending delete.
+  if (g_delete_armed) { g_delete_armed = false; drawDeleteButton(); }
+
   if (inBtn(btnBackHit, tx, ty))   { g_view = VIEW_LIST; renderInventory(); return; }
 
   // Unit navigation — step to the previous/next unit of this item and load

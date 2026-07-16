@@ -198,3 +198,91 @@ bool mergeRoofInventories() {
                 NUM_ROOFS, (code == 200 || code == 201) ? "OK" : "FAILED", code, merged_count);
   return (code == 200 || code == 201);
 }
+
+// ============================================================================
+// Manual delete — removes ONE physical unit of `name` from whichever roof doc
+// currently reports it. Needed so a manual delete actually sticks: the display
+// writes the decremented quantity to /current, but the very next
+// mergeRoofInventories() re-derives each camera item's quantity by summing the
+// roof docs, which would otherwise restore the unit the user just removed.
+// Decrementing the source roof doc keeps the two in sync.
+//
+// Scans roofs in order and stops at the first one that has the item (a single
+// unit lives on exactly one shelf). Items that exist only in /current — e.g.
+// GM65 barcode adds, which never appear in a roof doc — match no roof here and
+// return false; for those the /current write alone is authoritative, so the
+// caller can safely ignore the result.
+bool decrementItemInRoofs(const String& name) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  for (int roof = 1; roof <= NUM_ROOFS; roof++) {
+    String url =
+      "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+      "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
+      "/inventory/roof" + String(roof) + "?key=" + String(FIREBASE_API_KEY);
+
+    DynamicJsonDocument doc(8192);
+    bool loaded = false;
+    {
+      WiFiClientSecure client;
+      client.setInsecure();
+      HTTPClient http;
+      http.setTimeout(10000);
+      if (!http.begin(client, url)) continue;
+      int code = http.GET();
+      if (code == 200)
+        loaded = !deserializeJson(doc, http.getString(), DeserializationOption::NestingLimit(20));
+      http.end();
+    }
+    if (!loaded) continue;
+
+    JsonArray items = doc["fields"]["items"]["arrayValue"]["values"];
+
+    DynamicJsonDocument out(8192);
+    JsonObject fields = out["fields"].to<JsonObject>();
+    fields["updatedAt"]["stringValue"] = doc["fields"]["updatedAt"]["stringValue"].as<String>();
+    fields["source"]["stringValue"]    = "ESP32-CH-delete";
+    JsonArray out_items = fields["items"]["arrayValue"]["values"].to<JsonArray>();
+
+    bool found = false;
+    for (JsonObject v : items) {
+      JsonObject mf = v["mapValue"]["fields"];
+      String iname = mf["name"]["stringValue"].as<String>();
+      int qty = mf["quantity"]["stringValue"].as<String>().toInt();
+
+      if (!found && iname.equalsIgnoreCase(name)) {
+        found = true;
+        qty -= 1;
+        if (qty <= 0) continue;  // last unit on this roof — drop the entry
+      }
+
+      JsonObject o = out_items.createNestedObject()["mapValue"]["fields"].to<JsonObject>();
+      o["name"]["stringValue"]       = iname;
+      o["quantity"]["stringValue"]   = String(qty);
+      o["confidence"]["stringValue"] = mf["confidence"]["stringValue"].as<String>();
+      JsonArray ea = mf["expiries"]["arrayValue"]["values"];
+      if (ea.size() > 0) {
+        JsonArray oea = o["expiries"]["arrayValue"]["values"].to<JsonArray>();
+        for (JsonObject ed : ea)
+          oea.createNestedObject()["stringValue"] = ed["stringValue"].as<String>();
+      }
+    }
+
+    if (!found) continue;  // not on this roof — try the next one
+
+    String payload;
+    serializeJson(out, payload);
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    http.setTimeout(10000);
+    if (!http.begin(client, url)) return false;
+    http.addHeader("Content-Type", "application/json");
+    int code = http.PATCH(payload);
+    http.end();
+    Serial.printf("[DELETE] roof%d -%s -> HTTP %d\n", roof, name.c_str(), code);
+    return (code == 200 || code == 201);
+  }
+
+  return false;  // item not found in any roof doc (e.g. GM65-only item)
+}
