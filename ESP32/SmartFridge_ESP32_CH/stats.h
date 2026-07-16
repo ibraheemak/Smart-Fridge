@@ -16,7 +16,12 @@
 // ----------------------------------------------------------------------------
 // Data
 // ----------------------------------------------------------------------------
-#define MAX_BOUGHT_ITEMS 20
+// Not a hard technical limit — just a fixed-array cap. The stats screen
+// already scrolls (see computeStatsLayout()'s up/down arrows below), so this
+// only needs to be large enough that a real month's worth of distinct
+// groceries never gets truncated; each entry is a single String + int, so
+// raising it costs negligible RAM on this board.
+#define MAX_BOUGHT_ITEMS 60
 
 struct BoughtItem {
   String name;
@@ -64,18 +69,38 @@ bool fetchBoughtStats() {
   String body = http.getString();
   http.end();
 
-  DynamicJsonDocument doc(4096);
+  // Sized for MAX_BOUGHT_ITEMS real product names, not just 20 — 4096 was
+  // already tight for a month with many distinct purchases.
+  DynamicJsonDocument doc(8192);
   if (deserializeJson(doc, body)) return false;
 
   JsonObject fields = doc["fields"];
   if (fields.isNull()) return false;
 
+  // Firestore's REST API returns a map's fields sorted alphabetically by
+  // name, not by count — so simply taking the first MAX_BOUGHT_ITEMS fields
+  // encountered would silently drop whichever items happen to sort late
+  // (e.g. "Original Oatcakes" behind a month with 20+ earlier-alphabet
+  // purchases), even though they're genuinely in the document. Once the
+  // array fills up, replace the current-smallest count instead of just
+  // stopping, so the on-device list always holds the true top
+  // MAX_BOUGHT_ITEMS by count regardless of field iteration order.
   g_bought_count = 0;
   for (JsonPair kv : fields) {
-    if (g_bought_count >= MAX_BOUGHT_ITEMS) break;
-    g_bought[g_bought_count].name  = kv.key().c_str();
-    g_bought[g_bought_count].count = kv.value()["integerValue"].as<int>();
-    g_bought_count++;
+    int count = kv.value()["integerValue"].as<int>();
+    if (g_bought_count < MAX_BOUGHT_ITEMS) {
+      g_bought[g_bought_count].name  = kv.key().c_str();
+      g_bought[g_bought_count].count = count;
+      g_bought_count++;
+    } else {
+      int min_idx = 0;
+      for (int i = 1; i < g_bought_count; i++)
+        if (g_bought[i].count < g_bought[min_idx].count) min_idx = i;
+      if (count > g_bought[min_idx].count) {
+        g_bought[min_idx].name  = kv.key().c_str();
+        g_bought[min_idx].count = count;
+      }
+    }
   }
 
   // Sort descending by count (simple bubble sort — small array).

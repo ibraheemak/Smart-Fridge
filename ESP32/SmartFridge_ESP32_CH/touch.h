@@ -720,8 +720,20 @@ void handleTouch() {
       return x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h;
     };
     if (inTile(g_home_tiles[HOME_TILE_INVENTORY], tx, ty)) {
-      g_view = VIEW_LIST;
-      renderInventory();
+      // Pull the latest /current before showing the list — g_items is only as
+      // fresh as the last loop()-driven refresh, which can lag behind an
+      // in-flight camera/barcode write, so re-fetch on entry instead of
+      // showing whatever happened to be cached.
+      showStatus("Loading inventory", "");
+      mergeRoofInventories();
+      fetchInventory();
+      // fetchInventory() may have already switched to VIEW_NEW_ITEM and drawn
+      // the expiry-prompt screen for a freshly-detected item (processNextPending())
+      // — don't clobber that.
+      if (g_view != VIEW_NEW_ITEM) {
+        g_view = VIEW_LIST;
+        renderInventory();
+      }
     } else if (inTile(g_home_tiles[HOME_TILE_SCAN], tx, ty)) {
       g_view = VIEW_SCAN;
       beginGM65ScanSession();
