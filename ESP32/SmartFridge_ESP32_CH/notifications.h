@@ -29,6 +29,10 @@
 #define NOTIF_DEFAULT_RET_DAYS   7
 #define NOTIF_PER_PAGE           4    // rows shown per page on the list screen
 
+#define EXPIRY_WARN_MIN_D        0    // "warn N days before expiry" bounds
+#define EXPIRY_WARN_MAX_D       30
+#define EXPIRY_WARN_DEFAULT      3
+
 struct Notification {
   String text;
   time_t created;   // epoch seconds (0 = unknown, e.g. logged before NTP sync)
@@ -39,6 +43,11 @@ int g_notif_count       = 0;
 int g_notif_retention_d = NOTIF_DEFAULT_RET_DAYS;
 int g_notif_page        = 0;
 
+// Expiry-alert config (persisted alongside the list in NVS "notif").
+int  g_expiry_warn_days = EXPIRY_WARN_DEFAULT;  // days before expiry to warn
+bool g_expiry_alert_on  = true;                 // expired / about-to-expire alerts
+bool g_newitem_alert_on = true;                 // log a notification per new item
+
 // ----------------------------------------------------------------------------
 // Persistence (NVS namespace "notif")
 // ----------------------------------------------------------------------------
@@ -47,6 +56,9 @@ void saveNotifications() {
   p.begin("notif", false);
   p.clear();
   p.putInt("ret", g_notif_retention_d);
+  p.putInt("ewd", g_expiry_warn_days);
+  p.putBool("eon", g_expiry_alert_on);
+  p.putBool("non", g_newitem_alert_on);
   p.putInt("cnt", g_notif_count);
   for (int i = 0; i < g_notif_count; i++) {
     char k[8];
@@ -62,6 +74,9 @@ void loadNotifications() {
   Preferences p;
   p.begin("notif", true);   // read-only
   g_notif_retention_d = p.getInt("ret", NOTIF_DEFAULT_RET_DAYS);
+  g_expiry_warn_days  = p.getInt("ewd", EXPIRY_WARN_DEFAULT);
+  g_expiry_alert_on   = p.getBool("eon", true);
+  g_newitem_alert_on  = p.getBool("non", true);
   g_notif_count       = p.getInt("cnt", 0);
   if (g_notif_count < 0) g_notif_count = 0;
   if (g_notif_count > MAX_NOTIFICATIONS) g_notif_count = MAX_NOTIFICATIONS;
@@ -79,6 +94,8 @@ void loadNotifications() {
   p.end();
   if (g_notif_retention_d < NOTIF_RETENTION_MIN_D) g_notif_retention_d = NOTIF_RETENTION_MIN_D;
   if (g_notif_retention_d > NOTIF_RETENTION_MAX_D) g_notif_retention_d = NOTIF_RETENTION_MAX_D;
+  if (g_expiry_warn_days   < EXPIRY_WARN_MIN_D)    g_expiry_warn_days   = EXPIRY_WARN_MIN_D;
+  if (g_expiry_warn_days   > EXPIRY_WARN_MAX_D)    g_expiry_warn_days   = EXPIRY_WARN_MAX_D;
 }
 
 // Drop notifications older than the retention window. Returns true if any were
@@ -129,6 +146,58 @@ void clearAllNotifications() {
   g_notif_count = 0;
   g_notif_page  = 0;
   saveNotifications();
+}
+
+// True if an identical alert message is already in the log. Used to dedupe
+// expiry alerts so a given item+date isn't re-logged on every scan / reboot.
+bool notificationExists(const String& text) {
+  for (int i = 0; i < g_notif_count; i++)
+    if (g_notifs[i].text == text) return true;
+  return false;
+}
+
+// Add an alert only if the exact same text isn't already logged.
+void addNotificationUnique(const String& text) {
+  if (notificationExists(text)) return;
+  addNotification(text);
+}
+
+// Convert a "YYYY-MM-DD" expiry string to a day number (epoch/86400). -1 if
+// malformed. Noon avoids DST edge cases shifting the date.
+static long expiryToDayNumber(const String& ymd) {
+  if (ymd.length() != 10) return -1;
+  struct tm t = {};
+  t.tm_year = ymd.substring(0, 4).toInt() - 1900;
+  t.tm_mon  = ymd.substring(5, 7).toInt() - 1;
+  t.tm_mday = ymd.substring(8, 10).toInt();
+  t.tm_hour = 12;
+  time_t e = mktime(&t);
+  if (e < 0) return -1;
+  return (long) (e / 86400L);
+}
+
+// Scan the live inventory (g_items[], from display.h) for units that are
+// expired or within g_expiry_warn_days of expiring, and log one alert each.
+// Deduped by exact text, so repeat scans don't pile up copies. No-op until the
+// clock is set or if expiry alerts are switched off.
+void scanExpiries() {
+  if (!g_expiry_alert_on) return;
+  time_t now = time(nullptr);
+  if (now < 24 * 3600) return;                 // clock not synced yet
+  long today = (long) (now / 86400L);
+  for (int i = 0; i < g_item_count; i++) {
+    for (int j = 0; j < g_items[i].expiry_count; j++) {
+      const String& e = g_items[i].expiries[j];
+      long d = expiryToDayNumber(e);
+      if (d < 0) continue;                     // empty/malformed slot
+      long left = d - today;
+      String msg;
+      if (left < 0)                        msg = "Expired: " + g_items[i].name + " (" + e + ")";
+      else if (left <= g_expiry_warn_days) msg = "Expires soon: " + g_items[i].name + " (" + e + ")";
+      else continue;
+      addNotificationUnique(msg);
+    }
+  }
 }
 
 // "3m ago" / "5h ago" / "2d ago" for the list rows.
@@ -236,7 +305,7 @@ void openNotificationsScreen() {
 
 void handleNotificationsTouch(int x, int y) {
   if (inBtn(btnBackHit, x, y))      { g_view = VIEW_HOME; renderHomeScreen(); return; }
-  if (inBtn(btnNotifOptions, x, y)) { openNotifSettingsScreen(); return; }
+  if (inBtn(btnNotifOptions, x, y)) { g_notif_settings_prev = VIEW_NOTIFICATIONS; openNotifSettingsScreen(); return; }
 
   int pages = (g_notif_count + NOTIF_PER_PAGE - 1) / NOTIF_PER_PAGE;
   if (pages == 0) pages = 1;
@@ -271,12 +340,28 @@ void handleNotificationsTouch(int x, int y) {
 }
 
 // ----------------------------------------------------------------------------
-// Settings sub-screen (VIEW_NOTIF_SETTINGS) — retention window + clear-all
+// Settings sub-screen (VIEW_NOTIF_SETTINGS) — retention + expiry-alert config.
+// Reached from the alerts list ("Config") or the main Settings header ("Alerts").
+//
+// Rows (reusing settings.h's setRowY / SET_* layout):
+//   0  Auto-delete after   [ -  Nd  + ]   retention window (X days)
+//   1  Warn before expiry  [ -  Nd  + ]   how many days early to warn
+//   2  Expiry alerts       [ ON/OFF   ]   master toggle for expired/soon alerts
+//   3  New-item alerts      [ ON/OFF   ]   log a notification per new item
+//   4  (hint text)
+//   5  [ Clear All Now ]
 // ----------------------------------------------------------------------------
-BtnRect btnNotifRetM, btnNotifRetP, btnNotifClearNow;
+BtnRect btnNotifRetM, btnNotifRetP;
+BtnRect btnExpWarnM,  btnExpWarnP;
+BtnRect btnExpAlertTgl, btnNewItemTgl, btnNotifClearNow;
 
-void drawNotifRetentionValue() {
-  drawSetValue(1, String(g_notif_retention_d) + "d");   // reuses settings.h layout
+void drawNotifSettingsValues() {
+  drawSetValue(0, String(g_notif_retention_d) + "d");
+  drawSetValue(1, String(g_expiry_warn_days) + "d");
+  drawBtn(btnExpAlertTgl, g_expiry_alert_on  ? "ON" : "OFF",
+          g_expiry_alert_on  ? TFT_DARKGREEN : 0x6000);
+  drawBtn(btnNewItemTgl,  g_newitem_alert_on ? "ON" : "OFF",
+          g_newitem_alert_on ? TFT_DARKGREEN : 0x6000);
 }
 
 void renderNotifSettingsScreen() {
@@ -291,25 +376,31 @@ void renderNotifSettingsScreen() {
   tft.setTextSize(2);
   tft.drawString("Alert Settings", w / 2, HEADER_HEIGHT_PX / 2);
 
-  // Row 1: auto-delete after N days.
+  const char* labels[4] = { "Auto-delete", "Warn before", "Expiry alerts", "New-item alert" };
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
-  tft.drawString("Auto-delete after", SIDE_PADDING_PX, setRowY(1) + 2 + SET_BTN_H / 2);
+  for (int i = 0; i < 4; i++)
+    tft.drawString(labels[i], SIDE_PADDING_PX, setRowY(i) + 2 + SET_BTN_H / 2);
 
-  btnNotifRetM = {SET_MINUS_X, setRowY(1) + 2, SET_BTN_W, SET_BTN_H};
-  btnNotifRetP = {SET_PLUS_X,  setRowY(1) + 2, SET_BTN_W, SET_BTN_H};
-  drawBtn(btnNotifRetM, "-", TFT_DARKGREY);
-  drawBtn(btnNotifRetP, "+", TFT_DARKGREY);
-  drawNotifRetentionValue();
+  btnNotifRetM   = {SET_MINUS_X, setRowY(0) + 2, SET_BTN_W, SET_BTN_H};
+  btnNotifRetP   = {SET_PLUS_X,  setRowY(0) + 2, SET_BTN_W, SET_BTN_H};
+  btnExpWarnM    = {SET_MINUS_X, setRowY(1) + 2, SET_BTN_W, SET_BTN_H};
+  btnExpWarnP    = {SET_PLUS_X,  setRowY(1) + 2, SET_BTN_W, SET_BTN_H};
+  btnExpAlertTgl = {SET_MINUS_X, setRowY(2) + 2, 150, SET_BTN_H};
+  btnNewItemTgl  = {SET_MINUS_X, setRowY(3) + 2, 150, SET_BTN_H};
+
+  drawBtn(btnNotifRetM, "-", TFT_DARKGREY); drawBtn(btnNotifRetP, "+", TFT_DARKGREY);
+  drawBtn(btnExpWarnM,  "-", TFT_DARKGREY); drawBtn(btnExpWarnP,  "+", TFT_DARKGREY);
+  drawNotifSettingsValues();
 
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   tft.setTextSize(1);
-  tft.drawString("Alerts older than this are deleted automatically.",
-                 SIDE_PADDING_PX, setRowY(2) + 10);
+  tft.drawString("Warn = days before expiry. Old alerts auto-delete.",
+                 SIDE_PADDING_PX, setRowY(4) + 12);
 
-  btnNotifClearNow = {(w - 200) / 2, setRowY(4), 200, SET_BTN_H + 4};
+  btnNotifClearNow = {(w - 200) / 2, setRowY(5), 200, SET_BTN_H};
   drawBtn(btnNotifClearNow, "Clear All Now", 0x6000);
 }
 
@@ -320,20 +411,48 @@ void openNotifSettingsScreen() {
 
 void handleNotifSettingsTouch(int x, int y) {
   if (inBtn(btnBackHit, x, y)) {
-    saveNotifications();          // persist the retention change
-    purgeOldNotifications();      // apply it immediately
-    g_view = VIEW_NOTIFICATIONS;
-    renderNotificationsScreen();
+    saveNotifications();          // persist retention + expiry-alert config
+    purgeOldNotifications();      // apply the retention change immediately
+    if (g_notif_settings_prev == VIEW_SETTINGS) {
+      g_view = VIEW_SETTINGS;
+      renderSettingsScreen();     // defined in settings.h (included earlier)
+    } else {
+      g_view = VIEW_NOTIFICATIONS;
+      renderNotificationsScreen();
+    }
     return;
   }
   if (inBtn(btnNotifRetM, x, y)) {
     g_notif_retention_d = max(NOTIF_RETENTION_MIN_D, g_notif_retention_d - 1);
-    drawNotifRetentionValue();
+    drawSetValue(0, String(g_notif_retention_d) + "d");
     return;
   }
   if (inBtn(btnNotifRetP, x, y)) {
     g_notif_retention_d = min(NOTIF_RETENTION_MAX_D, g_notif_retention_d + 1);
-    drawNotifRetentionValue();
+    drawSetValue(0, String(g_notif_retention_d) + "d");
+    return;
+  }
+  if (inBtn(btnExpWarnM, x, y)) {
+    g_expiry_warn_days = max(EXPIRY_WARN_MIN_D, g_expiry_warn_days - 1);
+    drawSetValue(1, String(g_expiry_warn_days) + "d");
+    return;
+  }
+  if (inBtn(btnExpWarnP, x, y)) {
+    g_expiry_warn_days = min(EXPIRY_WARN_MAX_D, g_expiry_warn_days + 1);
+    drawSetValue(1, String(g_expiry_warn_days) + "d");
+    return;
+  }
+  if (inBtn(btnExpAlertTgl, x, y)) {
+    g_expiry_alert_on = !g_expiry_alert_on;
+    drawBtn(btnExpAlertTgl, g_expiry_alert_on ? "ON" : "OFF",
+            g_expiry_alert_on ? TFT_DARKGREEN : 0x6000);
+    if (g_expiry_alert_on) scanExpiries();   // catch up on anything already due
+    return;
+  }
+  if (inBtn(btnNewItemTgl, x, y)) {
+    g_newitem_alert_on = !g_newitem_alert_on;
+    drawBtn(btnNewItemTgl, g_newitem_alert_on ? "ON" : "OFF",
+            g_newitem_alert_on ? TFT_DARKGREEN : 0x6000);
     return;
   }
   if (inBtn(btnNotifClearNow, x, y)) {

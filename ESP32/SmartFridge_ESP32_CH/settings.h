@@ -33,6 +33,10 @@
 // Defined in notifications.h (included after this file). Logs an alert into the
 // persistent notifications list shown on the home "ALERTS" tile / list screen.
 void addNotification(const String& text);
+// Opens the alert-settings sub-screen (VIEW_NOTIF_SETTINGS) — retention window
+// + expiry-alert config. Reached from this Settings screen's header "Alerts"
+// button; g_notif_settings_prev (touch.h) tells it to return here on Back.
+void openNotifSettingsScreen();
 
 // ----------------------------------------------------------------------------
 // Persisted settings
@@ -212,6 +216,7 @@ void handleAlertTouch(int x, int y) {
 static inline int setRowY(int i) { return HEADER_HEIGHT_PX + 6 + i * SET_ROW_H; }
 
 BtnRect btnSetBuzzer;
+BtnRect btnSetNotif;              // header button → alert-settings sub-screen
 BtnRect btnDoorM, btnDoorP;
 BtnRect btnTMinM, btnTMinP, btnTMaxM, btnTMaxP;
 BtnRect btnHMinM, btnHMinP, btnHMaxM, btnHMaxP;
@@ -267,6 +272,12 @@ void renderSettingsScreen() {
   layoutDetailButtons();
   drawBtn(btnBack, "< Back", TFT_DARKGREY);
 
+  // Header "Alerts" button (top-right) → alert-settings sub-screen. Mirrors the
+  // "Config" button on the notifications list screen; clear of the centered
+  // title and the top-left back-button hit zone.
+  btnSetNotif = {w - 96, 6, 88, HEADER_HEIGHT_PX - 12};
+  drawBtn(btnSetNotif, "Alerts", 0x2945);
+
   layoutSettings();
 
   const char* labels[6] = {
@@ -303,6 +314,15 @@ void handleSettingsTouch(int x, int y) {
     g_view = VIEW_HOME;
     renderHomeScreen();
     checkEnvironmentAlert();
+    return;
+  }
+
+  // Header "Alerts" opens the alert-settings sub-screen; persist current
+  // settings first (the sub-screen returns here on Back).
+  if (inBtn(btnSetNotif, x, y)) {
+    saveSettings();
+    g_notif_settings_prev = VIEW_SETTINGS;
+    openNotifSettingsScreen();
     return;
   }
 

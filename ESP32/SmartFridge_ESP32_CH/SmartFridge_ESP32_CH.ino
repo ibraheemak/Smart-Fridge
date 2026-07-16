@@ -170,6 +170,12 @@ bool fetchInventory() {
         break;
       }
     }
+    // Log a "new item detected" alert (in addition to the on-screen
+    // VIEW_NEW_ITEM prompt). Only once the baseline is established
+    // (g_prev_initialized) so a reboot — where the previous snapshot is empty
+    // and every item looks new — doesn't flood the log.
+    if (g_prev_initialized && !found && g_newitem_alert_on)
+      addNotification("New item: " + it.name);
     // New units = slots that didn't exist before and have no date yet.
     int start = found ? prev_expiry_count : 0;
     // Parse quantity to estimate how many units there are now.
@@ -330,6 +336,7 @@ void setup() {
   mergeRoofInventories();
   if (fetchInventory()) {
     g_last_signature = buildSignature();
+    scanExpiries();   // log any already-expired / about-to-expire units at boot
     // Don't overwrite the new-item prompt that fetchInventory() may have just drawn.
     if (g_view == VIEW_LIST) renderInventory();
   } else {
@@ -417,6 +424,7 @@ void loop() {
     if (g_view == VIEW_HOME || g_view == VIEW_LIST || g_view == VIEW_STATS) {
       mergeRoofInventories();
       if (fetchInventory()) {
+        scanExpiries();   // re-check expiries whenever the inventory refreshes
         String sig = buildSignature();
         if (sig != g_last_signature) {
           g_last_signature = sig;
@@ -469,10 +477,14 @@ void loop() {
   static unsigned long g_last_notif_purge_ms = 0;
   if (millis() - g_last_notif_purge_ms >= 300000UL) {   // every 5 min
     g_last_notif_purge_ms = millis();
-    if (purgeOldNotifications()) {
-      saveNotifications();
-      if (g_view == VIEW_HOME) renderHomeScreen();
-    }
+    // Re-scan expiries too: an item can cross its "about to expire" / "expired"
+    // threshold purely by the clock advancing, with no inventory change to
+    // trigger the poll-driven scan above.
+    int before = g_notif_count;
+    scanExpiries();
+    bool purged = purgeOldNotifications();
+    if (purged) saveNotifications();
+    if ((purged || g_notif_count != before) && g_view == VIEW_HOME) renderHomeScreen();
   }
 
   delay(50);

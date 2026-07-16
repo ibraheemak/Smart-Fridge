@@ -214,6 +214,12 @@ void cancelGM65Scan() {
   g_scan_session_count = 0;
 }
 
+// Lets touch.h (included before this file) read the scan count for the
+// "< Back" handler without needing direct access to the static variable.
+int gm65ScanSessionCount() {
+  return g_scan_session_count;
+}
+
 // Looks up a barcode via Open Food Facts. Returns the product name, or ""
 // if not found / not reachable. status==0 means "not in their database".
 String lookupProductName(const String& barcode) {
@@ -535,8 +541,14 @@ void pollGM65() {
         showStatus("Scan complete", String(n) + (n == 1 ? " item added" : " items added"));
         delay(1500);
         fetchInventory();
-        g_view = VIEW_LIST;
-        renderInventory();
+        // fetchInventory() detects the just-scanned unit(s) as new, enqueues an
+        // expiry prompt and switches to VIEW_NEW_ITEM (via processNextPending).
+        // Don't clobber that prompt — the user needs it to stay up until they
+        // enter/skip the date. Only fall back to the list when no prompt opened.
+        if (g_view != VIEW_NEW_ITEM) {
+          g_view = VIEW_LIST;
+          renderInventory();
+        }
       } else {
         showStatus("Not scanned", "Please try again");
         delay(3000);
