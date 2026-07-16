@@ -13,7 +13,8 @@
 // as it does for camera-detected items.
 //
 // Requires touch.h and display.h to already be included (for g_view,
-// VIEW_LIST, renderInventory()) and fetchInventory() to be defined in the
+// VIEW_LIST, renderInventory()), espnow_link.h (for cameraScanInProgress() —
+// the camera-priority gate), and fetchInventory() to be defined in the
 // main .ino.
 // ============================================================================
 
@@ -55,6 +56,30 @@ void saveOfflineBarcode(const String& barcode) {
   }
   g_offline_barcodes[g_offline_count++] = barcode;
   Serial.printf("[GM65][OFFLINE] Saved barcode \"%s\" (%d in queue)\n", barcode.c_str(), g_offline_count);
+}
+
+// ---------------------------------------------------------------------------
+// Deferred barcode queue — holds barcodes scanned while the camera is busy
+// (see the camera-priority gating in espnow_link.h). The camera takes priority
+// on inventory/current: a barcode scanned during a door-close camera scan is
+// parked here and only looked up + written once every roof has reported done,
+// so the GM65 PATCH can't clobber the camera's merge (both rewrite the whole
+// document). Drained by serviceDeferredBarcodes() below. Same RAM-array,
+// drop-oldest-when-full shape as the offline buffer above.
+// ---------------------------------------------------------------------------
+#define GM65_DEFERRED_MAX 20
+static String g_deferred_barcodes[GM65_DEFERRED_MAX];
+static int    g_deferred_count = 0;
+
+void deferBarcode(const String& barcode) {
+  if (g_deferred_count >= GM65_DEFERRED_MAX) {
+    Serial.println("[GM65][DEFER] Queue full — dropping oldest barcode");
+    for (int i = 1; i < GM65_DEFERRED_MAX; i++) g_deferred_barcodes[i-1] = g_deferred_barcodes[i];
+    g_deferred_count = GM65_DEFERRED_MAX - 1;
+  }
+  g_deferred_barcodes[g_deferred_count++] = barcode;
+  Serial.printf("[GM65][DEFER] Camera busy — held barcode \"%s\" (%d queued)\n",
+                barcode.c_str(), g_deferred_count);
 }
 
 
@@ -574,6 +599,20 @@ void pollGM65() {
   g_gm65_state = GM65_IDLE;
 
   Serial.printf("[GM65] Scanned barcode: %s\n", barcode.c_str());
+
+  // Camera priority — if a door-close camera scan is still running, don't touch
+  // inventory/current now (it would race the camera's merge). Park the barcode;
+  // serviceDeferredBarcodes() processes it once every roof reports done. Re-arm
+  // and keep the session alive so the user can keep scanning meanwhile.
+  if (cameraScanInProgress()) {
+    deferBarcode(barcode);
+    g_scan_session_count++;
+    showStatus("Camera scanning...", "Item queued, adding shortly");
+    delay(1500);
+    triggerGM65Scan();
+    return;
+  }
+
   showStatus("Scanned barcode", barcode);
 
   if (WiFi.status() != WL_CONNECTED) {
@@ -621,5 +660,31 @@ void replayOfflineBarcodes() {
     }
   }
   g_offline_count = 0;
+  if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
+}
+
+// Called from loop() the moment the camera finishes its scan (see
+// cameraScanJustFinished() in espnow_link.h) — processes every barcode held
+// back for camera priority, now that the camera's merge has already landed in
+// inventory/current. Mirrors a live scan (lookup -> inventory -> bought). If
+// WiFi dropped in the meantime, hand the barcode to the offline buffer instead
+// of losing it, so it still syncs later.
+void serviceDeferredBarcodes() {
+  if (g_deferred_count == 0) return;
+  Serial.printf("[GM65][DEFER] Camera done — processing %d held barcode(s)\n", g_deferred_count);
+  for (int i = 0; i < g_deferred_count; i++) {
+    String barcode = g_deferred_barcodes[i];
+    if (WiFi.status() != WL_CONNECTED) { saveOfflineBarcode(barcode); continue; }
+    showStatus("Adding item...", barcode);
+    String name = lookupProductName(barcode);
+    if (name.length() == 0) {
+      Serial.printf("[GM65][DEFER] Barcode %s not found — skipping\n", barcode.c_str());
+      continue;
+    }
+    bool ok = addScannedItemToInventory(name);
+    if (ok) saveBoughtItem(name);
+    Serial.printf("[GM65][DEFER] \"%s\" -> %s\n", name.c_str(), ok ? "OK" : "FAILED");
+  }
+  g_deferred_count = 0;
   if (fetchInventory() && g_view == VIEW_LIST) renderInventory();
 }

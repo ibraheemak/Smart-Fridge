@@ -117,6 +117,19 @@ void espnowSendLiveViewFrame(const uint8_t* jpeg, size_t len) {
   Serial.printf("[ESPNOW] >> live view frame sent (%d bytes, %d chunks)\n", (int)len, totalChunks);
 }
 
+// Tells the CH board this camera has finished its whole scan pipeline
+// (capture -> Gemini -> Firestore write), so CH can release any barcode scan
+// it held back to give the camera priority (see the camera-priority gating in
+// the CH board's espnow_link.h / gm65.h). Sent once per SCAN_TRIGGER, right
+// after captureAndProcess() returns — regardless of whether the scan actually
+// wrote anything (a capture/WiFi/Gemini failure still "finishes" the scan), so
+// the CH side never waits on a camera that already gave up.
+void espnowSendScanDone() {
+  const char *msg = "SCAN_DONE";
+  esp_err_t result = esp_now_send(CH_MAC_ADDR, (const uint8_t *)msg, strlen(msg));
+  Serial.printf("[ESPNOW] >> SCAN_DONE -> CH (%s)\n", result == ESP_OK ? "ok" : "failed");
+}
+
 #if CAMERA_ROOF == 1
 // Fire-and-forget push of a fresh DHT11 reading to the CH board's display.
 // Called right after readTemperature()/saveTemperature() succeed — never

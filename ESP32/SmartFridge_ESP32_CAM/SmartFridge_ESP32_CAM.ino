@@ -267,6 +267,10 @@ void loop() {
   if (espnowScanTriggerReceived()) {
     Serial.println("[ESPNOW] SCAN_TRIGGER received — auto scan");
     captureAndProcess();            // existing scan flow
+    // Signal CH the camera is done so it can process any barcode scan it held
+    // back for camera priority. Sent after captureAndProcess() returns so it
+    // covers every exit path (success or an early capture/WiFi/Gemini bail).
+    espnowSendScanDone();
   }
 
   if (espnowLiveViewRequested()) {
