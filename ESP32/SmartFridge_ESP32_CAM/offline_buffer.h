@@ -62,10 +62,9 @@ bool savePhotoOffline(const uint8_t* data, size_t size) {
 // through Gemini → Firestore exactly as a live scan would, then deletes it.
 // Returns true if the photo was replayed.
 //
-// Forward-declares the two functions it needs from gemini.h / firebase.h so
+// Forward-declares the functions it needs from gemini.h / firebase.h so
 // this file can be included before them.
-String sendToGemini(uint8_t*, size_t, const String&);
-bool   parseGeminiResponse(const String&, JsonDocument&);
+bool   detectItemsFromPhoto(uint8_t*, size_t, const String&, JsonDocument&);
 String fetchBasicItems();
 bool   saveToFirebase(JsonDocument&);
 bool   saveScanHistory(JsonDocument&);
@@ -88,17 +87,12 @@ bool replayOfflinePhotos() {
     f.close();
 
     String basic_items = fetchBasicItems();
-    String response = sendToGemini(buf, size, basic_items);
+    StaticJsonDocument<2048> detected_items;
+    bool ok = detectItemsFromPhoto(buf, size, basic_items, detected_items);
     free(buf);
 
-    if (response.length() == 0) {
-        Serial.println("[OFFLINE] Gemini returned empty — keeping photo for next retry");
-        return false;
-    }
-
-    StaticJsonDocument<2048> detected_items;
-    if (!parseGeminiResponse(response, detected_items)) {
-        Serial.println("[OFFLINE] Parse failed — keeping photo");
+    if (!ok) {
+        Serial.println("[OFFLINE] No usable AI response — keeping photo for next retry");
         return false;
     }
 

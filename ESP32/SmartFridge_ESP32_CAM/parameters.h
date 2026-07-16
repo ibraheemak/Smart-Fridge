@@ -38,7 +38,7 @@
 // each other. The CH display board merges all roof docs into the combined
 // inventory/current doc that it (and the app) actually displays/edits — see
 // inventory_merge.h on the CH board.
-#define CAMERA_ROOF  2   // 1, 2, 3... — set per physical board
+#define CAMERA_ROOF  1   // 1, 2, 3... — set per physical board
 #define STRINGIFY2(x) #x
 #define STRINGIFY(x)  STRINGIFY2(x)
 #define INVENTORY_DOC_ID  "roof" STRINGIFY(CAMERA_ROOF)
@@ -130,6 +130,16 @@ static uint8_t CH_MAC_ADDR[6] = { 0xA8, 0x42, 0xE3, 0x46, 0xE0, 0x64 };
 // ----------------------------------------------------------------------------
 #define GEMINI_REQUEST_TIMEOUT_MS 30000
 #define GEMINI_MAX_RETRIES            2
+
+// ----------------------------------------------------------------------------
+// GPT (OpenAI) — fallback when Gemini fails, see detectItemsFromPhoto() in
+// gemini.h
+// ----------------------------------------------------------------------------
+#define OPENAI_REQUEST_TIMEOUT_MS 30000
+#define OPENAI_VISION_MODEL       "gpt-4o-mini"
+// Debug: 1 = skip Gemini entirely and always call GPT directly, so the
+// fallback path itself can be exercised without needing Gemini to fail.
+#define AI_FORCE_GPT                  0
 
 // ----------------------------------------------------------------------------
 // TIMEZONE

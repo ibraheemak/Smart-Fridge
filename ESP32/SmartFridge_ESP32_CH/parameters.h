@@ -160,6 +160,13 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
 #define MAX_RECIPES                  3
 #define RECIPE_ROW_H                 60
 
+// GPT (OpenAI) — fallback when Gemini fails, see fetchRecipes() in recipes.h
+#define OPENAI_RECIPES_TIMEOUT_MS 20000
+#define OPENAI_TEXT_MODEL         "gpt-4o-mini"
+// Debug: 1 = skip Gemini entirely and always call GPT directly, so the
+// fallback path itself can be exercised without needing Gemini to fail.
+#define AI_FORCE_GPT                  0
+
 // ----------------------------------------------------------------------------
 // FIREBASE STORAGE — item icons
 // ----------------------------------------------------------------------------

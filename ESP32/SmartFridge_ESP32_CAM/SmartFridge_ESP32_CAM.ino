@@ -147,19 +147,13 @@ void captureAndProcess() {
     return;
   }
 
-  Serial.println("[SCAN] Sending to Gemini...");
   String basic_items = fetchBasicItems();
-  String response    = sendToGemini(photo_data, photo_size, basic_items);
+  StaticJsonDocument<2048> detected_items;
+  bool ok = detectItemsFromPhoto(photo_data, photo_size, basic_items, detected_items);
   free(photo_data);
 
-  if (response.length() == 0) {
-    Serial.println("[SCAN] No Gemini response");
-    return;
-  }
-
-  StaticJsonDocument<2048> detected_items;
-  if (!parseGeminiResponse(response, detected_items)) {
-    Serial.println("[SCAN] Parse failed");
+  if (!ok) {
+    Serial.println("[SCAN] No usable AI response");
     return;
   }
 

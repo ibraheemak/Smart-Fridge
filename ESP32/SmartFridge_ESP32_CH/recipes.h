@@ -145,18 +145,10 @@ String buildFilterInstruction() {
   }
 }
 
-bool fetchRecipes() {
-  g_recipe_count   = 0;
-  g_recipes_scroll = 0;
-  g_recipes_status = "";
-
-  if (WiFi.status() != WL_CONNECTED) { g_recipes_status = "No WiFi connection"; return false; }
-
+// Builds the shared recipe prompt (ingredients + filter clause).
+String buildRecipePrompt() {
   String ingredients = buildIngredientList();
-  if (ingredients.length() == 0) { g_recipes_status = "Fridge is empty - scan some items first"; return false; }
-
-  String prompt =
-    "I have these ingredients in my fridge: " + ingredients + ". " +
+  return "I have these ingredients in my fridge: " + ingredients + ". " +
     buildFilterInstruction() +
     "Suggest up to " + String(MAX_RECIPES) + " simple recipes using mostly these "
     "ingredients (common pantry staples like salt, oil, sugar, water are fine "
@@ -164,54 +156,12 @@ bool fetchRecipes() {
     "\"recipe name\",\"summary\":\"one short sentence\",\"steps\":[\"step 1 "
     "text\",\"step 2 text\"]}]} — each array entry in \"steps\" must be exactly "
     "one instruction step, not the whole method in one string.";
+}
 
-  DynamicJsonDocument reqDoc(4096);
-  JsonArray contents = reqDoc["contents"].to<JsonArray>();
-  JsonObject content0 = contents.createNestedObject();
-  JsonArray parts = content0["parts"].to<JsonArray>();
-  parts.createNestedObject()["text"] = prompt;
-  String body;
-  serializeJson(reqDoc, body);
-
-  String url = String(GEMINI_API_ENDPOINT) + "?key=" + GEMINI_API_KEY;
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  http.setTimeout(GEMINI_RECIPES_TIMEOUT_MS);
-  if (!http.begin(client, url)) { g_recipes_status = "Request failed"; return false; }
-  http.addHeader("Content-Type", "application/json");
-
-  int code = http.POST(body);
-  if (code != 200) {
-    Serial.printf("[RECIPES] Gemini HTTP %d\n", code);
-    http.end();
-    g_recipes_status = "Could not reach Gemini (HTTP " + String(code) + ")";
-    return false;
-  }
-  String response = http.getString();
-  http.end();
-
-  StaticJsonDocument<8192> full;
-  if (deserializeJson(full, response)) { g_recipes_status = "Bad response from Gemini"; return false; }
-  const char* text = full["candidates"][0]["content"]["parts"][0]["text"];
-  if (!text) { g_recipes_status = "No suggestions returned"; return false; }
-
-  // Strip a ```json ... ``` fence if Gemini added one despite the prompt,
-  // then trim to the outermost {...} — mirrors parseGeminiResponse() in the
-  // CAM board's gemini.h.
-  String json_text = String(text);
-  json_text.trim();
-  if (json_text.startsWith("```")) {
-    int nl = json_text.indexOf('\n');
-    if (nl >= 0) json_text = json_text.substring(nl + 1);
-    int fence = json_text.lastIndexOf("```");
-    if (fence >= 0) json_text = json_text.substring(0, fence);
-    json_text.trim();
-  }
-  int fb = json_text.indexOf('{'), lb = json_text.lastIndexOf('}');
-  if (fb >= 0 && lb > fb) json_text = json_text.substring(fb, lb + 1);
-
+// Parses the {"recipes":[...]} JSON text (already extracted from whichever
+// provider's response) into g_recipes[]/g_recipe_count. Shared by both the
+// Gemini and GPT paths below.
+bool parseRecipesJson(const String& json_text) {
   DynamicJsonDocument recipesDoc(4096);
   if (deserializeJson(recipesDoc, json_text)) { g_recipes_status = "Could not parse suggestions"; return false; }
 
@@ -244,8 +194,128 @@ bool fetchRecipes() {
   }
 
   if (g_recipe_count == 0) g_recipes_status = "No suggestions returned";
-  Serial.printf("[RECIPES] %d suggestions\n", g_recipe_count);
   return g_recipe_count > 0;
+}
+
+// Strips a ```json ... ``` fence if the model added one despite the prompt,
+// then trims to the outermost {...} — mirrors parseGeminiResponse() in the
+// CAM board's gemini.h.
+String extractJsonObject(const String& text) {
+  String json_text = text;
+  json_text.trim();
+  if (json_text.startsWith("```")) {
+    int nl = json_text.indexOf('\n');
+    if (nl >= 0) json_text = json_text.substring(nl + 1);
+    int fence = json_text.lastIndexOf("```");
+    if (fence >= 0) json_text = json_text.substring(0, fence);
+    json_text.trim();
+  }
+  int fb = json_text.indexOf('{'), lb = json_text.lastIndexOf('}');
+  if (fb >= 0 && lb > fb) json_text = json_text.substring(fb, lb + 1);
+  return json_text;
+}
+
+bool fetchRecipesFromGemini(const String& prompt) {
+  DynamicJsonDocument reqDoc(4096);
+  JsonArray contents = reqDoc["contents"].to<JsonArray>();
+  JsonObject content0 = contents.createNestedObject();
+  JsonArray parts = content0["parts"].to<JsonArray>();
+  parts.createNestedObject()["text"] = prompt;
+  String body;
+  serializeJson(reqDoc, body);
+
+  String url = String(GEMINI_API_ENDPOINT) + "?key=" + GEMINI_API_KEY;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(GEMINI_RECIPES_TIMEOUT_MS);
+  if (!http.begin(client, url)) { g_recipes_status = "Request failed"; return false; }
+  http.addHeader("Content-Type", "application/json");
+
+  int code = http.POST(body);
+  if (code != 200) {
+    Serial.printf("[RECIPES] Gemini HTTP %d\n", code);
+    http.end();
+    g_recipes_status = "Could not reach Gemini (HTTP " + String(code) + ")";
+    return false;
+  }
+  String response = http.getString();
+  http.end();
+
+  StaticJsonDocument<8192> full;
+  if (deserializeJson(full, response)) { g_recipes_status = "Bad response from Gemini"; return false; }
+  const char* text = full["candidates"][0]["content"]["parts"][0]["text"];
+  if (!text) { g_recipes_status = "No suggestions returned"; return false; }
+
+  return parseRecipesJson(extractJsonObject(String(text)));
+}
+
+// GPT (OpenAI) fallback — same prompt, plain chat-completions call (no
+// image), used when Gemini fails or when AI_FORCE_GPT forces GPT directly.
+bool fetchRecipesFromGPT(const String& prompt) {
+  DynamicJsonDocument reqDoc(4096);
+  reqDoc["model"] = OPENAI_TEXT_MODEL;
+  JsonArray messages = reqDoc["messages"].to<JsonArray>();
+  JsonObject msg0 = messages.createNestedObject();
+  msg0["role"] = "user";
+  msg0["content"] = prompt;
+  reqDoc["max_tokens"] = 1000;
+  String body;
+  serializeJson(reqDoc, body);
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(OPENAI_RECIPES_TIMEOUT_MS);
+  if (!http.begin(client, OPENAI_API_ENDPOINT)) { g_recipes_status = "Request failed"; return false; }
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Authorization", String("Bearer ") + OPENAI_API_KEY);
+
+  int code = http.POST(body);
+  if (code != 200) {
+    Serial.printf("[RECIPES] GPT HTTP %d\n", code);
+    http.end();
+    g_recipes_status = "Could not reach GPT (HTTP " + String(code) + ")";
+    return false;
+  }
+  String response = http.getString();
+  http.end();
+
+  StaticJsonDocument<8192> full;
+  if (deserializeJson(full, response)) { g_recipes_status = "Bad response from GPT"; return false; }
+  const char* text = full["choices"][0]["message"]["content"];
+  if (!text) { g_recipes_status = "No suggestions returned"; return false; }
+
+  return parseRecipesJson(extractJsonObject(String(text)));
+}
+
+bool fetchRecipes() {
+  g_recipe_count   = 0;
+  g_recipes_scroll = 0;
+  g_recipes_status = "";
+
+  if (WiFi.status() != WL_CONNECTED) { g_recipes_status = "No WiFi connection"; return false; }
+
+  String ingredients = buildIngredientList();
+  if (ingredients.length() == 0) { g_recipes_status = "Fridge is empty - scan some items first"; return false; }
+
+  String prompt = buildRecipePrompt();
+  bool ok;
+#if AI_FORCE_GPT
+  Serial.println("[RECIPES] AI_FORCE_GPT set — calling GPT directly");
+  ok = fetchRecipesFromGPT(prompt);
+#else
+  ok = fetchRecipesFromGemini(prompt);
+  if (!ok) {
+    Serial.println("[RECIPES] Gemini failed — falling back to GPT...");
+    g_recipe_count = 0;
+    ok = fetchRecipesFromGPT(prompt);
+  }
+#endif
+
+  Serial.printf("[RECIPES] %d suggestions\n", g_recipe_count);
+  return ok;
 }
 
 // ----------------------------------------------------------------------------
