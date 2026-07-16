@@ -35,6 +35,12 @@ struct InventoryItem {
   String confidence;
   String expiries[MAX_EXPIRIES_PER_ITEM];  // one per unit, "YYYY-MM-DD" or ""
   int    expiry_count;                      // how many slots are filled
+  // "gm65" if this item was added/last-scanned via barcode (see gm65.h) —
+  // inventory_merge.h never auto-deletes a "gm65" item just because a camera
+  // doesn't currently see it. Must round-trip through every write path that
+  // rebuilds the whole /current doc (persistItemsToFirestore() below,
+  // gm65.h's addScannedItemToInventory()) or the tag is silently lost.
+  String source;
 };
 
 InventoryItem g_items[MAX_ITEMS_DISPLAYED];

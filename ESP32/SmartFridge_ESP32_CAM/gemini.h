@@ -6,12 +6,17 @@
 #include "parameters.h"
 #include "SECRETS.h"
 
-String sendToGemini(uint8_t* photo_data, size_t photo_size, const String& basic_items) {
+String sendToGemini(uint8_t* photo_data, size_t photo_size, const String& basic_items,
+                     const String& known_items) {
   String prompt =
     "Analyze this refrigerator image. Identify all visible food items and estimate quantities.";
   if (basic_items.length() > 0)
     prompt += " When an item matches one of these canonical names use it exactly: [" + basic_items +
               "]. For any item NOT in that list, describe it in lowercase.";
+  if (known_items.length() > 0)
+    prompt += " These items are already tracked in this fridge from a previous scan: [" + known_items +
+              "]. If what you see is the same item, reuse that EXACT name text (same wording, same word"
+              " order) instead of describing it differently.";
 #if DEBUG_MODE
   prompt += " Also add a top-level \\\"description\\\" field with a brief note on image quality and lighting.";
 #endif
@@ -96,12 +101,17 @@ bool parseGeminiResponse(const String& response, JsonDocument& detected_items) {
 // instead of ArduinoJson, since the base64 photo payload is too big to want
 // a second in-memory copy inside a JsonDocument.
 // ----------------------------------------------------------------------------
-String sendToGPT(uint8_t* photo_data, size_t photo_size, const String& basic_items) {
+String sendToGPT(uint8_t* photo_data, size_t photo_size, const String& basic_items,
+                  const String& known_items) {
   String prompt =
     "Analyze this refrigerator image. Identify all visible food items and estimate quantities.";
   if (basic_items.length() > 0)
     prompt += " When an item matches one of these canonical names use it exactly: [" + basic_items +
               "]. For any item NOT in that list, describe it in lowercase.";
+  if (known_items.length() > 0)
+    prompt += " These items are already tracked in this fridge from a previous scan: [" + known_items +
+              "]. If what you see is the same item, reuse that EXACT name text (same wording, same word"
+              " order) instead of describing it differently.";
 #if DEBUG_MODE
   prompt += " Also add a top-level \\\"description\\\" field with a brief note on image quality and lighting.";
 #endif
@@ -177,20 +187,20 @@ bool parseGPTResponse(const String& response, JsonDocument& detected_items) {
 // GPT if Gemini comes back empty or fails to parse.
 // ----------------------------------------------------------------------------
 bool detectItemsFromPhoto(uint8_t* photo_data, size_t photo_size, const String& basic_items,
-                           JsonDocument& detected_items) {
+                           const String& known_items, JsonDocument& detected_items) {
 #if AI_FORCE_GPT
   Serial.println("[AI] AI_FORCE_GPT set — calling GPT directly");
-  String response = sendToGPT(photo_data, photo_size, basic_items);
+  String response = sendToGPT(photo_data, photo_size, basic_items, known_items);
   if (response.length() == 0) { Serial.println("[AI] GPT returned empty"); return false; }
   return parseGPTResponse(response, detected_items);
 #else
   Serial.println("[AI] Sending to Gemini...");
-  String response = sendToGemini(photo_data, photo_size, basic_items);
+  String response = sendToGemini(photo_data, photo_size, basic_items, known_items);
   if (response.length() > 0 && parseGeminiResponse(response, detected_items)) return true;
 
   Serial.println("[AI] Gemini failed — falling back to GPT...");
   detected_items.clear();
-  String gpt_response = sendToGPT(photo_data, photo_size, basic_items);
+  String gpt_response = sendToGPT(photo_data, photo_size, basic_items, known_items);
   if (gpt_response.length() == 0) { Serial.println("[AI] GPT returned empty"); return false; }
   return parseGPTResponse(gpt_response, detected_items);
 #endif

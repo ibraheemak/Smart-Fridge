@@ -47,6 +47,20 @@ static volatile float g_espnow_temp_c       = -1.0f;
 static volatile float g_espnow_humidity     = -1.0f;
 
 // ----------------------------------------------------------------------------
+// Inventory-changed receive — pushed by any CAM board right after it saves a
+// fresh roof doc, as "INV:<roof>". Primary trigger for re-merging/re-fetching
+// Firestore: it's more reliable than waiting on the RTDB SSE stream, since
+// that stream only fires if the CAM board's rtdb_notify.h HTTPS PUT actually
+// lands — a TLS handshake made right after the CAM's Gemini/GPT vision call,
+// which can fail under heap pressure even with plenty of total free heap
+// (mbedTLS needs one large contiguous block). ESP-NOW needs neither TLS nor a
+// large contiguous buffer, so it isn't subject to that failure mode. The
+// which-roof number isn't currently used (a full re-merge covers all roofs
+// anyway) but is included for future per-roof diagnostics.
+// ----------------------------------------------------------------------------
+static volatile bool g_espnow_inventory_pending = false;
+
+// ----------------------------------------------------------------------------
 // Live View — CAM boards reply to a "LIVE_CAPTURE" request with a JPEG
 // snapshot, split into chunks small enough for a single ESP-NOW packet
 // (legacy ESP-NOW payload limit is ~250 bytes). Chunks are disambiguated from
@@ -127,6 +141,11 @@ void onLiveViewChunk(const uint8_t *data, int len) {
 void onEspNowDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len >= 1 && data[0] == LIVEVIEW_CHUNK_MAGIC) { onLiveViewChunk(data, len); return; }
 
+  if (len >= 4 && memcmp(data, "INV:", 4) == 0) {
+    g_espnow_inventory_pending = true;
+    return;
+  }
+
   if (len < 5 || memcmp(data, "TEMP:", 5) != 0) return;
 
   char buf[32];
@@ -171,6 +190,13 @@ bool espnowTemperatureReceived(float &tempC, float &humidity) {
   g_espnow_temp_pending = false;
   tempC = g_espnow_temp_c;
   humidity = g_espnow_humidity;
+  return true;
+}
+
+// Returns true exactly once when a CAM board reports a fresh roof-doc write.
+bool espnowInventoryUpdated() {
+  if (!g_espnow_inventory_pending) return false;
+  g_espnow_inventory_pending = false;
   return true;
 }
 

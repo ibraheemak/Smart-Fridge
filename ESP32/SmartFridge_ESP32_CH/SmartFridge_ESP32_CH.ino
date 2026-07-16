@@ -131,6 +131,7 @@ bool fetchInventory() {
     it.name       = mf["name"]["stringValue"].as<String>();
     it.quantity   = mf["quantity"]["stringValue"].as<String>();
     it.confidence = mf["confidence"]["stringValue"].as<String>();
+    it.source     = mf["source"]["stringValue"].as<String>();
     it.expiry_count = 0;
 
     // Parse expiries array (new format).
@@ -154,12 +155,25 @@ bool fetchInventory() {
   Serial.printf("[FIREBASE] %d items, updatedAt=%s\n", g_item_count, g_updated_at.c_str());
 
   // Detect units that still need an expiry date and enqueue prompts for them.
-  // g_prev_item_count is 0 on the very first fetch (incl. right after a reboot),
-  // so every item is treated as "found = false" and any empty expiry slot is
-  // enqueued — this also re-prompts for units that were never dated before a
-  // restart, instead of silently adopting them as the baseline.
+  // g_prev_item_count is 0 on the very first fetch (incl. right after a
+  // reboot) — with no baseline to diff against, every item would otherwise
+  // look "found = false" and pop the "New Item Detected" screen for any item
+  // that simply never had a date entered, even if it's been sitting in the
+  // fridge for weeks. Skip the new/missing-expiry detection entirely on that
+  // first fetch: silently adopt whatever's already in Firestore as the
+  // baseline instead of treating it as a batch of brand-new items.
   for (int i = 0; i < g_item_count; i++) {
     InventoryItem& it = g_items[i];
+    // Parse quantity to estimate how many units there are now — needed
+    // below regardless of g_prev_initialized so display/edit code always
+    // sees expiry_count matching quantity.
+    int qty = it.quantity.toInt();
+    if (qty <= 0) qty = it.expiry_count > 0 ? it.expiry_count : 1;
+    if (qty > MAX_EXPIRIES_PER_ITEM) qty = MAX_EXPIRIES_PER_ITEM;
+    while (it.expiry_count < qty) it.expiries[it.expiry_count++] = "";
+
+    if (!g_prev_initialized) continue;
+
     // Find matching item in previous snapshot.
     int prev_expiry_count = 0;
     bool found = false;
@@ -170,21 +184,9 @@ bool fetchInventory() {
         break;
       }
     }
-    // Log a "new item detected" alert (in addition to the on-screen
-    // VIEW_NEW_ITEM prompt). Only once the baseline is established
-    // (g_prev_initialized) so a reboot — where the previous snapshot is empty
-    // and every item looks new — doesn't flood the log.
-    if (g_prev_initialized && !found && g_newitem_alert_on)
-      addNotification("New item: " + it.name);
+    if (!found && g_newitem_alert_on) addNotification("New item: " + it.name);
     // New units = slots that didn't exist before and have no date yet.
     int start = found ? prev_expiry_count : 0;
-    // Parse quantity to estimate how many units there are now.
-    int qty = it.quantity.toInt();
-    if (qty <= 0) qty = it.expiry_count > 0 ? it.expiry_count : 1;
-    // Clamp to array bounds.
-    if (qty > MAX_EXPIRIES_PER_ITEM) qty = MAX_EXPIRIES_PER_ITEM;
-    // Grow expiry_count to match quantity (new slots start empty).
-    while (it.expiry_count < qty) it.expiries[it.expiry_count++] = "";
     // Enqueue any new empty slots.
     for (int s = start; s < it.expiry_count; s++) {
       if (it.expiries[s].length() == 0)
@@ -417,7 +419,20 @@ void loop() {
   // Show a deferred alert once the user is back on an idle screen.
   serviceEnvironmentAlert();
 
-  if (rtdbStreamPoll()) {
+  // Two ways this fires:
+  //  1. espnowInventoryUpdated() — a CAM board unicasts "INV:<roof>" straight
+  //     to this board right after saving a fresh roof doc (espnow_link.h on
+  //     both boards). No TLS/HTTPS involved, so it isn't affected by the
+  //     failure mode below. This is the primary trigger for CAM-side changes.
+  //  2. rtdbStreamPoll() — the RTDB SSE stream (rtdb_stream.h), driven by
+  //     rtdb_notify.h's HTTPS PUT bumping inventory_meta/updated_at. Still
+  //     the only trigger for same-board writes (GM65 scans, touch-edits) and
+  //     acts as a second, independent path for CAM writes. That PUT rides a
+  //     fresh TLS handshake right after the CAM's Gemini/GPT vision call and
+  //     can fail outright under heap pressure ("SSL - Memory allocation
+  //     failed") even with plenty of *total* free heap (mbedTLS needs one
+  //     large contiguous block) — which is exactly what (1) works around.
+  if (espnowInventoryUpdated() || rtdbStreamPoll()) {
     // Don't refresh while the user is on the new-item/expiry-entry screen — it
     // would overwrite the screen or disrupt an in-progress edit. Refreshing on
     // VIEW_STATS is fine since that screen doesn't depend on g_items.

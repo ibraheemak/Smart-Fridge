@@ -20,7 +20,6 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
-#include <WebServer.h>
 #include "time.h"
 
 #include "SECRETS.h"
@@ -37,33 +36,11 @@
 // ============================================================================
 // STATE
 // ============================================================================
-WebServer webServer(80);
 unsigned long lastTempReadMs = 0;
 unsigned long lastWifiRetryMs = 0;
 bool wasOffline = false;
 String savedWifiSSID;
 String savedWifiPass;
-
-// ============================================================================
-// WEB SERVER — /latest.jpg debug endpoint
-// ============================================================================
-void handleLatestJpeg() {
-  if (latest_jpeg && latest_jpeg_size > 0) {
-    WiFiClient client = webServer.client();
-    client.print("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: ");
-    client.print(latest_jpeg_size);
-    client.print("\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n");
-    size_t sent = 0;
-    while (sent < latest_jpeg_size) {
-      size_t chunk = min((size_t)1024, latest_jpeg_size - sent);
-      client.write(latest_jpeg + sent, chunk);
-      sent += chunk;
-    }
-    client.flush();
-  } else {
-    webServer.send(404, "text/plain", "No image captured yet. Send SCAN via serial first.");
-  }
-}
 
 // ============================================================================
 // WIFI & TIME
@@ -147,9 +124,10 @@ void captureAndProcess() {
     return;
   }
 
-  String basic_items = fetchBasicItems();
+  String basic_items  = fetchBasicItems();
+  String known_items  = fetchCurrentItemNames();
   StaticJsonDocument<2048> detected_items;
-  bool ok = detectItemsFromPhoto(photo_data, photo_size, basic_items, detected_items);
+  bool ok = detectItemsFromPhoto(photo_data, photo_size, basic_items, known_items, detected_items);
   free(photo_data);
 
   if (!ok) {
@@ -162,7 +140,7 @@ void captureAndProcess() {
     Serial.printf("[DEBUG] %s\n", detected_items["description"].as<const char*>());
 #endif
 
-  saveToFirebase(detected_items);
+  if (saveToFirebase(detected_items)) espnowSendInventoryUpdated();
   saveScanHistory(detected_items);
   Serial.printf("[SCAN] Done — %d items written to Firestore\n",
                 (int)detected_items["items"].as<JsonArray>().size());
@@ -252,10 +230,6 @@ void setup() {
   initTempSensor();
 #endif
 
-  webServer.on("/latest.jpg", HTTP_GET, handleLatestJpeg);
-  webServer.begin();
-  Serial.printf("[WEB] http://%s/latest.jpg\n", WiFi.localIP().toString().c_str());
-
   printHelp();
 }
 
@@ -282,8 +256,6 @@ void loop() {
     }
     replayOfflinePhotos();
   }
-
-  webServer.handleClient();
 
 #if CAMERA_ROOF == 1
   if (millis() - lastTempReadMs >= TEMP_READ_INTERVAL_MS) {

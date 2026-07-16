@@ -64,8 +64,9 @@ bool savePhotoOffline(const uint8_t* data, size_t size) {
 //
 // Forward-declares the functions it needs from gemini.h / firebase.h so
 // this file can be included before them.
-bool   detectItemsFromPhoto(uint8_t*, size_t, const String&, JsonDocument&);
+bool   detectItemsFromPhoto(uint8_t*, size_t, const String&, const String&, JsonDocument&);
 String fetchBasicItems();
+String fetchCurrentItemNames();
 bool   saveToFirebase(JsonDocument&);
 bool   saveScanHistory(JsonDocument&);
 
@@ -87,8 +88,9 @@ bool replayOfflinePhotos() {
     f.close();
 
     String basic_items = fetchBasicItems();
+    String known_items = fetchCurrentItemNames();
     StaticJsonDocument<2048> detected_items;
-    bool ok = detectItemsFromPhoto(buf, size, basic_items, detected_items);
+    bool ok = detectItemsFromPhoto(buf, size, basic_items, known_items, detected_items);
     free(buf);
 
     if (!ok) {
@@ -96,7 +98,7 @@ bool replayOfflinePhotos() {
         return false;
     }
 
-    saveToFirebase(detected_items);
+    if (saveToFirebase(detected_items)) espnowSendInventoryUpdated();
     saveScanHistory(detected_items);
     Serial.printf("[OFFLINE] Replayed OK — deleting %s\n", OFFLINE_PATH);
     SPIFFS.remove(OFFLINE_PATH);
