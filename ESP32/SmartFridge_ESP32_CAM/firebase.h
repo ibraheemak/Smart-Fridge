@@ -65,6 +65,34 @@ String fetchBasicItems() {
   return result;
 }
 
+// Names of items already tracked in fridges/{FRIDGE_ID}/inventory/current —
+// the merged, cross-roof, cross-GM65 view (see inventory_merge.h on the CH
+// board), not just this roof's own doc. Passed to the AI prompt (see
+// gemini.h) so a returning item gets named identically to how it's already
+// tracked (e.g. "dessert cup" every time, not "cup of dessert" on a later
+// scan) instead of silently becoming a duplicate entry under a new name.
+String fetchCurrentItemNames() {
+  String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+               "/databases/(default)/documents/fridges/" + String(FRIDGE_ID) +
+               "/inventory/current?key=" + String(FIREBASE_API_KEY);
+  HTTPClient http;
+  http.begin(url);
+  if (http.GET() != 200) { http.end(); return ""; }
+  String body = http.getString();
+  http.end();
+
+  DynamicJsonDocument doc(8192);
+  if (deserializeJson(doc, body, DeserializationOption::NestingLimit(20))) return "";
+  String result = "";
+  for (JsonObject v : doc["fields"]["items"]["arrayValue"]["values"].as<JsonArray>()) {
+    String name = v["mapValue"]["fields"]["name"]["stringValue"].as<String>();
+    if (name.length() == 0) continue;
+    if (result.length()) result += ", ";
+    result += name;
+  }
+  return result;
+}
+
 // ============================================================================
 // Firestore write
 // ============================================================================

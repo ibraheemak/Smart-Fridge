@@ -3,10 +3,6 @@
 #include "esp_camera.h"
 #include "parameters.h"
 
-// latest captured frame — served by /latest.jpg web endpoint
-uint8_t* latest_jpeg      = nullptr;
-size_t   latest_jpeg_size = 0;
-
 void initCamera() {
   Serial.println("[CAMERA] Initializing...");
   camera_config_t config = {};
@@ -94,10 +90,6 @@ uint8_t* capturePhoto(size_t* photo_size) {
   if (!data) { esp_camera_fb_return(fb); return nullptr; }
   memcpy(data, fb->buf, fb->len);
   *photo_size = fb->len;
-
-  if (latest_jpeg) { free(latest_jpeg); latest_jpeg = nullptr; }
-  latest_jpeg = (uint8_t*)malloc(fb->len);
-  if (latest_jpeg) { memcpy(latest_jpeg, fb->buf, fb->len); latest_jpeg_size = fb->len; }
 
   esp_camera_fb_return(fb);
   Serial.printf("[CAPTURE] %d bytes\n", *photo_size);

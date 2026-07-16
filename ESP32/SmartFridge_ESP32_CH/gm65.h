@@ -445,7 +445,8 @@ bool addScannedItemToInventory(const String& item_name) {
 
       int qty = emf["quantity"]["stringValue"].as<String>().toInt();
       if (qty <= 0) qty = 1;
-      if (!matched && existing_name.equalsIgnoreCase(item_name)) {
+      bool is_scanned_item = !matched && existing_name.equalsIgnoreCase(item_name);
+      if (is_scanned_item) {
         qty += 1;
         matched = true;
       }
@@ -454,6 +455,13 @@ bool addScannedItemToInventory(const String& item_name) {
       out["name"]["stringValue"]       = existing_name;
       out["quantity"]["stringValue"]   = String(qty);
       out["confidence"]["stringValue"] = emf["confidence"]["stringValue"].as<String>();
+
+      // This item is the one just scanned (an increment, not a fresh add) —
+      // tag/keep it "gm65" so inventory_merge.h never auto-deletes it just
+      // because a camera doesn't currently see it. Anything else keeps
+      // whatever source tag (if any) it already had.
+      String src = is_scanned_item ? "gm65" : emf["source"]["stringValue"].as<String>();
+      if (src.length() > 0) out["source"]["stringValue"] = src;
 
       JsonArray ea = emf["expiries"]["arrayValue"]["values"];
       if (ea.size() > 0) {
@@ -469,6 +477,7 @@ bool addScannedItemToInventory(const String& item_name) {
     out["name"]["stringValue"]       = item_name;
     out["quantity"]["stringValue"]   = "1";
     out["confidence"]["stringValue"] = "100";  // manually scanned, not AI-estimated
+    out["source"]["stringValue"]     = "gm65";
   }
 
   String payload;

@@ -16,6 +16,15 @@
 // combined by summing quantity; expiry dates already recorded against an
 // item in /current are preserved untouched, since CAM boards never write
 // expiries themselves (this board is the only place expiries get entered).
+//
+// An item that was in /current before this merge but that no roof reports
+// this cycle is dropped — the cameras no longer see it, so it's treated as
+// used up/discarded. The one exception is items tagged "source":"gm65" (see
+// gm65.h's addScannedItemToInventory()): barcode-scanned items are never
+// implicitly deleted by a merge, since a camera may never actually see them
+// (e.g. a small/hidden item), only an explicit future action should remove
+// them. That source tag is propagated forward on every merge so it isn't
+// lost the next cycle even if the item also happens to be camera-visible.
 // ============================================================================
 
 struct MergedItem {
@@ -129,22 +138,30 @@ bool mergeRoofInventories() {
           for (JsonObject ed : ea)
             out_ea.createNestedObject()["stringValue"] = ed["stringValue"].as<String>();
         }
+        // Propagate the "gm65" source tag forward so a barcode-scanned item
+        // that's also currently camera-visible doesn't lose its
+        // never-auto-delete protection the next time the camera stops
+        // seeing it.
+        String src = emf["source"]["stringValue"].as<String>();
+        if (src.equalsIgnoreCase("gm65")) out["source"]["stringValue"] = "gm65";
         break;
       }
     }
   }
 
-  // Carry over any items already in /current that no roof reported this
-  // cycle — e.g. GM65 barcode scans, which write straight to /current and
-  // never appear in a roof doc. Without this, the very next merge (every
-  // poll) would silently drop them since the loop above only ever writes
-  // items that came from a roof doc.
+  // Carry over items already in /current that no roof reported this cycle
+  // ONLY if they're tagged "source":"gm65" (barcode scans, which write
+  // straight to /current and never appear in a roof doc — a camera may never
+  // see them at all, so they must not be implicitly deleted just because no
+  // roof mentions them). Anything else not reported by any roof this cycle
+  // is treated as used up/discarded and dropped.
   if (has_existing) {
     JsonArray existing_items = cur_doc["fields"]["items"]["arrayValue"]["values"];
     for (JsonObject ev : existing_items) {
       JsonObject emf = ev["mapValue"]["fields"];
       String name = emf["name"]["stringValue"].as<String>();
       if (name.length() == 0) continue;
+      if (!String(emf["source"]["stringValue"].as<String>()).equalsIgnoreCase("gm65")) continue;
 
       bool already_merged = false;
       for (int i = 0; i < merged_count; i++) {
@@ -156,6 +173,7 @@ bool mergeRoofInventories() {
       out["name"]["stringValue"]       = name;
       out["quantity"]["stringValue"]   = emf["quantity"]["stringValue"].as<String>();
       out["confidence"]["stringValue"] = emf["confidence"]["stringValue"].as<String>();
+      out["source"]["stringValue"]     = "gm65";
 
       JsonArray ea = emf["expiries"]["arrayValue"]["values"];
       if (ea.size() > 0) {

@@ -130,3 +130,19 @@ void espnowSendTemperature(float tempC, float humidity) {
   Serial.printf("[ESPNOW] >> %s -> %s\n", msg, result == ESP_OK ? "ok" : "failed");
 }
 #endif
+
+// Fire-and-forget "I just wrote a new roof doc" signal, called right after
+// saveToFirebase() succeeds — used instead of relying solely on
+// rtdb_notify.h's HTTPS PUT to bump inventory_meta/updated_at. That PUT rides
+// a fresh TLS handshake right after this board's Gemini/GPT vision call and
+// can fail outright under heap pressure ("SSL - Memory allocation failed")
+// even with plenty of *total* free heap, because mbedTLS needs one large
+// contiguous block. ESP-NOW needs no TLS handshake and no contiguous buffer
+// of that size, so it isn't subject to the same failure mode — see the CH
+// board's espnowInventoryUpdated() for the receiving side.
+void espnowSendInventoryUpdated() {
+  char msg[16];
+  snprintf(msg, sizeof(msg), "INV:%d", CAMERA_ROOF);
+  esp_err_t result = esp_now_send(CH_MAC_ADDR, (const uint8_t *)msg, strlen(msg));
+  Serial.printf("[ESPNOW] >> %s -> %s\n", msg, result == ESP_OK ? "ok" : "failed");
+}

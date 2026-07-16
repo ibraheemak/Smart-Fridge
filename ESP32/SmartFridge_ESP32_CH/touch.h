@@ -518,6 +518,7 @@ void persistItemsToFirestore() {
     mf["name"]["stringValue"]       = g_items[i].name;
     mf["quantity"]["stringValue"]   = g_items[i].quantity;
     mf["confidence"]["stringValue"] = g_items[i].confidence;
+    if (g_items[i].source.length() > 0) mf["source"]["stringValue"] = g_items[i].source;
     // Serialize the expiries array.
     JsonArray ea = mf["expiries"]["arrayValue"]["values"].to<JsonArray>();
     for (int j = 0; j < g_items[i].expiry_count; j++)
