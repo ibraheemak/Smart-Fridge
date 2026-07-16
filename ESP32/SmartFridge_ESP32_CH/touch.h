@@ -50,6 +50,14 @@ void triggerGM65Scan();
 void beginGM65ScanSession();
 // Cancels an in-progress scan (user tapped "< Back" on the scanning screen).
 void cancelGM65Scan();
+// Number of items scanned so far in the current session (g_scan_session_count
+// is `static` inside gm65.h, so it can't be read directly from here).
+int gm65ScanSessionCount();
+
+// Defined in the main .ino, above setup() — Arduino's auto-prototype
+// generation didn't pick this one up, so it's forward-declared explicitly
+// (mirrors the same forward declaration already in gm65.h).
+bool fetchInventory();
 
 // Defined in settings.h, included after this file — handleTouch() dispatches
 // taps to the Settings screen and the environment-alert screen.
@@ -650,7 +658,18 @@ void handleTouch() {
   // VIEW_SCAN — "< Back" cancels the in-progress scan and returns home.
   if (g_view == VIEW_SCAN) {
     if (inBtn(btnBackHit, tx, ty)) {
+      int scannedCount = gm65ScanSessionCount();
       cancelGM65Scan();
+      if (scannedCount > 0) {
+        // At least one item was already scanned and PATCHed to Firestore
+        // before "< Back" was pressed. loop()'s doorbell poll ignores
+        // VIEW_SCAN (see rtdb_stream.h), so the one-shot RTDB change flag for
+        // this scan may already have been drained without ever calling
+        // fetchInventory() — mirror pollGM65()'s timeout path and fetch here
+        // so the new-item expiry prompt isn't silently dropped.
+        fetchInventory();
+        if (g_view == VIEW_NEW_ITEM) return;
+      }
       g_view = VIEW_HOME;
       renderHomeScreen();
     }

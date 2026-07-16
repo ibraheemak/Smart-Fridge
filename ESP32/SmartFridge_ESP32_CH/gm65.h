@@ -214,6 +214,12 @@ void cancelGM65Scan() {
   g_scan_session_count = 0;
 }
 
+// Lets touch.h (included before this file) read the scan count for the
+// "< Back" handler without needing direct access to the static variable.
+int gm65ScanSessionCount() {
+  return g_scan_session_count;
+}
+
 // Looks up a barcode via Open Food Facts. Returns the product name, or ""
 // if not found / not reachable. status==0 means "not in their database".
 String lookupProductName(const String& barcode) {
