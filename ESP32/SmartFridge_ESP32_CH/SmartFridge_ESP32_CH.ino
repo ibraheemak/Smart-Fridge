@@ -433,23 +433,25 @@ void loop() {
   //     failed") even with plenty of *total* free heap (mbedTLS needs one
   //     large contiguous block) — which is exactly what (1) works around.
   if (espnowInventoryUpdated() || rtdbStreamPoll()) {
-    // Don't refresh while the user is on the new-item/expiry-entry screen — it
-    // would overwrite the screen or disrupt an in-progress edit. Refreshing on
-    // VIEW_STATS is fine since that screen doesn't depend on g_items.
-    if (g_view == VIEW_HOME || g_view == VIEW_LIST || g_view == VIEW_STATS) {
-      mergeRoofInventories();
-      if (fetchInventory()) {
-        scanExpiries();   // re-check expiries whenever the inventory refreshes
-        String sig = buildSignature();
-        if (sig != g_last_signature) {
-          g_last_signature = sig;
-          // fetchInventory() may have already switched to VIEW_NEW_ITEM and drawn
-          // the notification screen (via processNextPending()) — don't paint over
-          // it. g_pending_count alone isn't a reliable signal here: it's already
-          // been decremented for the one notification currently on screen.
-          if (g_view == VIEW_HOME)  renderHomeScreen();
-          if (g_view == VIEW_LIST)  renderInventory();
-        }
+    // Merge + fetch unconditionally, regardless of which screen the user is
+    // on — a view gate here previously skipped the merge entirely (not just
+    // the redraw) whenever the user was on e.g. VIEW_SCAN, so a camera scan
+    // finishing mid-barcode-scan silently never made it into /current.
+    // Redraws below stay guarded by g_view so an active screen isn't painted
+    // over; fetchInventory() switching to VIEW_NEW_ITEM for a fresh pending
+    // expiry (via processNextPending()) is existing, expected behavior.
+    mergeRoofInventories();
+    if (fetchInventory()) {
+      scanExpiries();   // re-check expiries whenever the inventory refreshes
+      String sig = buildSignature();
+      if (sig != g_last_signature) {
+        g_last_signature = sig;
+        // fetchInventory() may have already switched to VIEW_NEW_ITEM and drawn
+        // the notification screen (via processNextPending()) — don't paint over
+        // it. g_pending_count alone isn't a reliable signal here: it's already
+        // been decremented for the one notification currently on screen.
+        if (g_view == VIEW_HOME)  renderHomeScreen();
+        if (g_view == VIEW_LIST)  renderInventory();
       }
     }
   }
@@ -464,9 +466,15 @@ void loop() {
   handleTouch();
   pollGM65();
 
-  // Camera finished its scan — now safe to process any barcode held back for
-  // camera priority (see cameraScanBegin() below / gm65.h).
+  // Camera finished its scan — merge the fresh roof docs into /current once
+  // more as a backstop (the espnowInventoryUpdated()/rtdbStreamPoll() block
+  // above already merges unconditionally, but SCAN_DONE and the CAM's "INV:"
+  // push are separate ESP-NOW messages with no ordering guarantee between
+  // them, so this covers the case where SCAN_DONE arrives first). Then it's
+  // safe to process any barcode held back for camera priority (see
+  // cameraScanBegin() below / gm65.h).
   if (cameraScanJustFinished()) {
+    mergeRoofInventories();
     serviceDeferredBarcodes();
   }
 
