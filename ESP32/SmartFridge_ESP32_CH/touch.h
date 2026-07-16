@@ -123,7 +123,7 @@ uint16_t g_cal_data[5];
 // Bump this key whenever the touch wiring/rotation changes, or to discard a
 // stale calibration saved before TOUCH_CS was wired into the active TFT_eSPI
 // config (those old values were garbage and would otherwise be reused).
-#define TOUCH_CAL_KEY "cal_v6"
+#define TOUCH_CAL_KEY "cal_v7"
 
 void initTouch() {
   Preferences prefs;
@@ -159,8 +159,7 @@ BtnRect btnDayMinus, btnDayPlus, btnMonMinus, btnMonPlus, btnYearMinus, btnYearP
 BtnRect btnSave;
 BtnRect btnEnterExpiry, btnSkip;  // VIEW_NEW_ITEM notification screen
 BtnRect btnUnitPrev, btnUnitNext; // VIEW_DETAIL — step between units of the same item
-BtnRect btnDelete;                // VIEW_DETAIL — remove the shown unit (header, top-right)
-BtnRect btnDeleteHit;             // larger invisible touch zone (top edge is inaccurate)
+BtnRect btnDelete;                // VIEW_DETAIL — remove the shown unit (beside Save)
 
 // Deleting inventory is destructive and the top-right corner is easy to brush,
 // so the Delete button is two-tap: the first tap "arms" it (turns red, label
@@ -196,15 +195,6 @@ void layoutDetailButtons() {
   // worry about overlapping with.
   btnBackHit = {0, 0, 160, 140};
 
-  // Delete button — top-right of the header, opposite "< Back". Clear of the
-  // centred "Item Details" title (which spans the middle of the header).
-  int delW = 92;
-  btnDelete    = {w - 8 - delW, 6, delW, HEADER_HEIGHT_PX - 12};
-  // Touch reads inaccurately near the top edge, so hit-test a much larger
-  // top-right zone (mirrors btnBackHit on the opposite corner). Nothing else
-  // interactive lives in the top-right 140px of the detail page.
-  btnDeleteHit = {w - 160, 0, 160, 140};
-
   int bw = 44, bh = 44;
   const int GROUP_GAP_PX = 12;
   int groupW = (w - 2 * GROUP_GAP_PX) / 3;
@@ -221,17 +211,22 @@ void layoutDetailButtons() {
   btnYearMinus = {g2,               y, bw, bh};
   btnYearPlus  = {g2 + groupW - bw, y, bw, bh};
 
-  btnSave = {(w - 140) / 2, y + 80, 140, 44};
+  // Save and Delete sit side by side, centred as one group on the bottom row.
+  int btn_y = y + 80, btn_w = 110, btn_h = 44;
+  const int SAVE_DEL_GAP_PX = 12;
+  int groupTotalW = 2 * btn_w + SAVE_DEL_GAP_PX;
+  int group_x0 = (w - groupTotalW) / 2;
+  btnSave   = {group_x0,                        btn_y, btn_w, btn_h};
+  btnDelete = {group_x0 + btn_w + SAVE_DEL_GAP_PX, btn_y, btn_w, btn_h};
 
-  // Unit prev/next arrows flank the centred Save button on the bottom row.
-  // Save spans x=(w-140)/2 .. +140 (170..310 at w=480), so these sit clear of
-  // it in the left/right margins.
-  int nav_y = y + 80, nav_w = 90, nav_h = 44;
+  // Unit prev/next arrows flank the Save/Delete group on the bottom row, in
+  // the left/right margins clear of it.
+  int nav_y = btn_y, nav_w = 90, nav_h = 44;
   btnUnitPrev = {8,              nav_y, nav_w, nav_h};
   btnUnitNext = {w - 8 - nav_w,  nav_y, nav_w, nav_h};
 }
 
-// Draws the header Delete button in its current arm state. Split out so the
+// Draws the Delete button in its current arm state. Split out so the
 // two-tap arm/disarm can repaint just this button without redrawing the whole
 // detail page. 0x8000 = maroon (idle), TFT_RED = armed/confirm.
 void drawDeleteButton() {
@@ -325,7 +320,6 @@ void drawItemDetail(int idx) {
 
   layoutDetailButtons();
   drawBtn(btnBack, "< Back", TFT_DARKGREY);
-  drawDeleteButton();
 
   int icon_x = SIDE_PADDING_PX;
   int icon_y = HEADER_HEIGHT_PX + 16;
@@ -364,10 +358,11 @@ void drawItemDetail(int idx) {
   drawExpiryDate();
 
   drawBtn(btnSave, "Save", TFT_DARKGREEN);
+  drawDeleteButton();
 
-  // With several units, show left/right arrows flanking Save so the user can
-  // step through each unit and set its own expiry date. The "Unit X / N" label
-  // above tracks which unit is currently shown.
+  // With several units, show left/right arrows flanking the Save/Delete group
+  // so the user can step through each unit and set its own expiry date. The
+  // "Unit X / N" label above tracks which unit is currently shown.
   if (unit_count > 1) {
     drawBtn(btnUnitPrev, "< Prev", TFT_NAVY);
     drawBtn(btnUnitNext, "Next >", TFT_NAVY);
@@ -806,9 +801,8 @@ void handleTouch() {
 
   // VIEW_DETAIL
 
-  // Delete button (header, top-right) — two-tap: first tap arms, second
-  // confirms. Checked before btnBackHit so its own hit zone isn't swallowed.
-  if (inBtn(btnDeleteHit, tx, ty)) {
+  // Delete button (beside Save) — two-tap: first tap arms, second confirms.
+  if (inBtn(btnDelete, tx, ty)) {
     if (g_delete_armed) deleteCurrentUnit();
     else { g_delete_armed = true; drawDeleteButton(); }
     return;
