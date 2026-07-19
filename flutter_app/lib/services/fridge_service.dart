@@ -77,14 +77,50 @@ class FridgeService {
       .map((s) =>
           s.docs.map((d) => ScanRecord.fromDoc(d.id, d.data())).toList());
 
-  /// True total number of scans ever taken (server-side count aggregate,
-  /// not capped by the 20-scan history window).
+  /// True total number of camera scans (server-side count aggregate, not
+  /// capped by the 20-scan history window). Excludes junk records stamped
+  /// 1970 by boards that scanned before their NTP clock sync finished.
   static Future<int?> totalScanCount() async {
     try {
-      final agg = await _fridgeRef.collection('scans').count().get();
+      final agg = await _fridgeRef
+          .collection('scans')
+          .where('timestamp', isGreaterThanOrEqualTo: '2000-01-01 00:00:00')
+          .count()
+          .get();
       return agg.count;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Server-side count of scans since [sinceIso] ("YYYY-MM-DD HH:MM:SS") —
+  /// the string ordering is chronological, so a range filter works.
+  static Future<int?> scanCountSince(String sinceIso) async {
+    try {
+      final agg = await _fridgeRef
+          .collection('scans')
+          .where('timestamp', isGreaterThanOrEqualTo: sinceIso)
+          .count()
+          .get();
+      return agg.count;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// All scans since [sinceIso], newest first — for the weekly activity
+  /// chart, which must not be capped at the 20-doc history window.
+  static Future<List<ScanRecord>> scansSince(String sinceIso) async {
+    try {
+      final snap = await _fridgeRef
+          .collection('scans')
+          .where('timestamp', isGreaterThanOrEqualTo: sinceIso)
+          .orderBy('timestamp', descending: true)
+          .limit(500)
+          .get();
+      return snap.docs.map((d) => ScanRecord.fromDoc(d.id, d.data())).toList();
+    } catch (_) {
+      return [];
     }
   }
 

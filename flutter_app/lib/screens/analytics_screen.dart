@@ -20,7 +20,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       FridgeService.inventoryStream();
   late final Stream<Map<String, int>> _boughtStream =
       FridgeService.boughtCountsStream();
+
+  // Server-side counts — never capped by the 20-scan history window.
   late final Future<int?> _totalScans = FridgeService.totalScanCount();
+  late final Future<int?> _weekCount =
+      FridgeService.scanCountSince(_weekStartIso);
+  late final Future<List<ScanRecord>> _weekScans =
+      FridgeService.scansSince(_weekStartIso);
 
   // Monday 00:00 of the current week.
   static DateTime get _weekStart {
@@ -29,12 +35,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return today.subtract(Duration(days: today.weekday - 1));
   }
 
-  int _scansThisWeek(List<ScanRecord> scans) {
-    final start = _weekStart;
-    return scans.where((s) {
-      final d = s.parsedTimestamp;
-      return d != null && !d.isBefore(start);
-    }).length;
+  static String get _weekStartIso {
+    final s = _weekStart;
+    return '${s.year}-${s.month.toString().padLeft(2, '0')}-'
+        '${s.day.toString().padLeft(2, '0')} 00:00:00';
   }
 
   @override
@@ -73,9 +77,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     FutureBuilder<int?>(
                       future: _totalScans,
                       builder: (_, totalSnap) => _SummaryCard(
-                        label: 'Total Scans',
-                        value: totalSnap.data?.toString() ??
-                            (scans.isEmpty ? '—' : '${scans.length}+'),
+                        label: 'Camera Scans',
+                        value: totalSnap.data?.toString() ?? '—',
                         icon: Icons.document_scanner_rounded,
                         color: AppColors.primary,
                       ),
@@ -91,19 +94,28 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    _SummaryCard(
-                      label: 'Scans This Week',
-                      value: '${_scansThisWeek(scans)}',
-                      icon: Icons.calendar_today_rounded,
-                      color: AppColors.tertiaryFixedDim,
+                    FutureBuilder<int?>(
+                      future: _weekCount,
+                      builder: (_, weekSnap) => _SummaryCard(
+                        label: 'Scans This Week',
+                        value: weekSnap.data?.toString() ?? '—',
+                        icon: Icons.calendar_today_rounded,
+                        color: AppColors.tertiaryFixedDim,
+                      ),
                     ),
                   ],
                 ),
 
                 const SizedBox(height: 20),
 
-                // Weekly activity chart
-                _WeeklyChart(scans: scans, weekStart: _weekStart),
+                // Weekly activity chart — from an uncapped week query
+                FutureBuilder<List<ScanRecord>>(
+                  future: _weekScans,
+                  builder: (_, weekSnap) => _WeeklyChart(
+                    scans: weekSnap.data ?? [],
+                    weekStart: _weekStart,
+                  ),
+                ),
 
                 const SizedBox(height: 20),
 
