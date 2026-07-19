@@ -3,6 +3,7 @@ import 'package:shimmer/shimmer.dart';
 import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_top_bar.dart';
 import '../widgets/item_icon.dart';
 import 'expiry_screen.dart';
 
@@ -19,13 +20,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   final _filters = ['All', 'Fresh', 'Expiring Soon', 'Expired', 'No Date'];
 
+  // Held in state so typing in the search box doesn't re-subscribe and
+  // flash the loading skeleton on every keystroke.
+  late final Stream<InventorySnapshot?> _invStream =
+      FridgeService.inventoryStream();
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: StreamBuilder<InventorySnapshot?>(
-          stream: FridgeService.inventoryStream(),
+          stream: _invStream,
           builder: (ctx, snap) {
             final isLoading =
                 snap.connectionState == ConnectionState.waiting;
@@ -66,34 +72,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
             return CustomScrollView(
               slivers: [
                 // ── App Bar ──────────────────────────────────────────────
-                SliverAppBar(
-                  floating: true,
-                  backgroundColor: AppColors.background,
-                  elevation: 0,
-                  scrolledUnderElevation: 0,
-                  titleSpacing: 16,
-                  title: Text(
-                    'Smart Fridge',
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  actions: [
-                    Padding(
-                      padding: const EdgeInsets.only(right: 16),
-                      child: CircleAvatar(
-                        radius: 18,
-                        backgroundColor: AppColors.primaryFixed,
-                        child: const Text(
-                          'SF',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                const AppTopBar(),
 
                 SliverToBoxAdapter(
                   child: Padding(
@@ -111,12 +90,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
                           child: TextField(
                             onChanged: (v) =>
                                 setState(() => _search = v),
-                            decoration: InputDecoration(
+                            decoration: const InputDecoration(
                               hintText: 'Search fridge...',
-                              prefixIcon: const Icon(Icons.search_rounded,
+                              prefixIcon: Icon(Icons.search_rounded,
                                   color: AppColors.outline),
                               border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
+                              contentPadding: EdgeInsets.symmetric(
                                   vertical: 12),
                             ),
                           ),
@@ -245,30 +224,42 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
+                            const Icon(
                               Icons.kitchen_rounded,
                               size: 72,
                               color: AppColors.outline,
                             ),
                             const SizedBox(height: 16),
-                            Text(
-                              inv == null
-                                  ? 'Fridge is empty'
-                                  : 'No items match',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleLarge,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              inv == null
-                                  ? 'Close the door to trigger an auto-scan'
-                                  : 'Try a different search or filter',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium,
-                            ),
+                            Builder(builder: (context) {
+                              // "No items match" only makes sense when a
+                              // search or filter is hiding items that exist.
+                              final filtering = _search.isNotEmpty ||
+                                  _filter != 'All';
+                              final fridgeEmpty =
+                                  (inv?.items.isEmpty ?? true) || !filtering;
+                              return Column(
+                                children: [
+                                  Text(
+                                    fridgeEmpty
+                                        ? 'Fridge is empty'
+                                        : 'No items match',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    fridgeEmpty
+                                        ? 'Close the door to trigger an auto-scan'
+                                        : 'Try a different search or filter',
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium,
+                                  ),
+                                ],
+                              );
+                            }),
                           ],
                         ),
                       ),
@@ -309,20 +300,6 @@ class _InventoryCard extends StatelessWidget {
   const _InventoryCard({required this.item});
 
   Color get _borderColor {
-    switch (item.expiryStatus) {
-      case ExpiryStatus.expired:
-      case ExpiryStatus.critical:
-        return AppColors.error;
-      case ExpiryStatus.soon:
-        return AppColors.tertiaryFixedDim;
-      case ExpiryStatus.ok:
-        return AppColors.secondary;
-      case ExpiryStatus.unknown:
-        return AppColors.outline;
-    }
-  }
-
-  Color get _expiryLabelColor {
     switch (item.expiryStatus) {
       case ExpiryStatus.expired:
       case ExpiryStatus.critical:
@@ -400,7 +377,7 @@ class _InventoryCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  color: _expiryLabelColor,
+                  color: _borderColor,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

@@ -82,22 +82,26 @@ class UsersScreen extends StatelessWidget {
                           color: AppColors.onSurfaceVariant),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryFixed,
-                      borderRadius: BorderRadius.circular(20),
+                  if (user?.metadata.creationTime != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryFixed,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        'Member since '
+                        '${user!.metadata.creationTime!.year}-'
+                        '${user.metadata.creationTime!.month.toString().padLeft(2, '0')}',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary),
+                      ),
                     ),
-                    child: const Text(
-                      'Admin',
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primary),
-                    ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -185,15 +189,15 @@ class UsersScreen extends StatelessWidget {
                 border: Border.all(
                     color: AppColors.outlineVariant.withValues(alpha: 0.5)),
               ),
-              child: Row(
+              child: const Row(
                 children: [
-                  const Icon(Icons.info_outline_rounded,
+                  Icon(Icons.info_outline_rounded,
                       size: 16, color: AppColors.onSurfaceVariant),
-                  const SizedBox(width: 10),
-                  const Expanded(
+                  SizedBox(width: 10),
+                  Expanded(
                     child: Text(
-                      'Family sharing will be added in a future update. '
-                      'For now, share the fridge by using the same account credentials.',
+                      'To share this fridge with family, sign in with the '
+                      'same account on their devices.',
                       style: TextStyle(
                           fontSize: 12,
                           color: AppColors.onSurfaceVariant),
@@ -270,7 +274,7 @@ class _ActionTile extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(Icons.chevron_right_rounded,
+            const Icon(Icons.chevron_right_rounded,
                 color: AppColors.onSurfaceVariant),
           ],
         ),

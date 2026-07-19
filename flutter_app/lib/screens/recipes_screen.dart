@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/fridge_service.dart';
 import '../services/gemini_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_top_bar.dart';
 
 class RecipesScreen extends StatefulWidget {
   const RecipesScreen({super.key});
@@ -64,13 +65,16 @@ class _RecipesScreenState extends State<RecipesScreen> {
     });
     try {
       final inv = await FridgeService.inventoryStream().first;
+      if (!mounted) return;
       if (inv == null || inv.items.isEmpty) {
         setState(() => _error = 'Fridge is empty — run a scan first.');
         return;
       }
       final result = await GeminiService.getRecipes(inv.items);
+      if (!mounted) return;
       setState(() => _recipes = result);
     } catch (e) {
+      if (!mounted) return;
       setState(() =>
           _error = e.toString().replaceFirst('Exception: ', ''));
     } finally {
@@ -88,29 +92,7 @@ class _RecipesScreenState extends State<RecipesScreen> {
         child: CustomScrollView(
           slivers: [
             // ── App Bar ────────────────────────────────────────────────────
-            SliverAppBar(
-              floating: true,
-              backgroundColor: AppColors.background,
-              elevation: 0,
-              scrolledUnderElevation: 0,
-              titleSpacing: 16,
-              title: Text('Smart Fridge',
-                  style: Theme.of(context).textTheme.headlineMedium),
-              actions: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: CircleAvatar(
-                    radius: 18,
-                    backgroundColor: AppColors.primaryFixed,
-                    child: const Text('SF',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary)),
-                  ),
-                ),
-              ],
-            ),
+            const AppTopBar(),
 
             SliverToBoxAdapter(
               child: Padding(
@@ -476,7 +458,7 @@ class _RecipeCard extends StatelessWidget {
             // Time
             Row(
               children: [
-                Icon(Icons.timer_rounded,
+                const Icon(Icons.timer_rounded,
                     size: 13, color: AppColors.onSurfaceVariant),
                 const SizedBox(width: 4),
                 Text(recipe.time,

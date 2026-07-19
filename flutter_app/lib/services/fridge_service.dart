@@ -34,6 +34,9 @@ class FridgeService {
   );
 
   // ── Real-time streams ──────────────────────────────────────────────────────
+  // Each call opens its own Firestore listener (with an immediate initial
+  // snapshot). Screens must hold the returned stream in a State field —
+  // calling these inside build() re-subscribes on every rebuild.
 
   /// Live inventory — rebuilds UI instantly on every ESP32-CAM scan.
   static Stream<InventorySnapshot?> inventoryStream() => _fridgeRef
@@ -62,18 +65,41 @@ class FridgeService {
           ? TemperatureReading.fromMap(s.data()!)
           : null);
 
-  /// Last 20 scans, newest first.
+  /// Last 20 scans, newest first. Ordered by the `timestamp` field the
+  /// firmware writes ("YYYY-MM-DD HH:MM:SS", lexicographically
+  /// chronological) — without an orderBy, Firestore returns the 20 OLDEST
+  /// docs, and descending doc-ID order would need a composite index.
   static Stream<List<ScanRecord>> scanHistoryStream() => _fridgeRef
       .collection('scans')
+      .orderBy('timestamp', descending: true)
       .limit(20)
       .snapshots()
-      .map((s) {
-        final docs = s.docs
-            .map((d) => ScanRecord.fromDoc(d.id, d.data()))
-            .toList()
-          ..sort((a, b) => b.id.compareTo(a.id));
-        return docs;
-      });
+      .map((s) =>
+          s.docs.map((d) => ScanRecord.fromDoc(d.id, d.data())).toList());
+
+  /// True total number of scans ever taken (server-side count aggregate,
+  /// not capped by the 20-scan history window).
+  static Future<int?> totalScanCount() async {
+    try {
+      final agg = await _fridgeRef.collection('scans').count().get();
+      return agg.count;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Purchase counters the CAM firmware maintains in
+  /// fridges/{id}/bought/{YYYY-MM}: field name = item name, value = times
+  /// bought this month. Empty map if the doc doesn't exist yet.
+  static Stream<Map<String, int>> boughtCountsStream() {
+    final now = DateTime.now();
+    final monthId = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+    return _fridgeRef.collection('bought').doc(monthId).snapshots().map((s) {
+      final data = s.data();
+      if (data == null) return <String, int>{};
+      return data.map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0));
+    });
+  }
 
   // ── Live View (RTDB request → CAM board → Firestore photo) ─────────────────
 
@@ -81,6 +107,19 @@ class FridgeService {
     return _rtdb
         .ref('fridges/${AppConfig.fridgeId}/liveview_requests/roof$roof/requested_at')
         .set(ServerValue.timestamp);
+  }
+
+  /// capturedAt of the photo currently stored for this roof (null if none).
+  /// Screens snapshot this before requesting so they can tell a fresh photo
+  /// from the stale one already in Firestore.
+  static Future<String?> currentLiveViewCapturedAt(int roof) async {
+    try {
+      final doc =
+          await _fridgeRef.collection('liveview').doc('roof$roof').get();
+      return doc.data()?['capturedAt'] as String?;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Live photo for the given roof (1-based). The CAM board writes a
@@ -132,10 +171,22 @@ class FridgeService {
 
   // ── Utilities ─────────────────────────────────────────────────────────────
 
-  /// Firebase Storage URL for item icon: icons/{name}.png
-  static String iconUrl(String itemName) {
+  /// True when a liveview capturedAt ("YYYY-MM-DD HH:MM:SS", ESP32 local
+  /// time) is recent enough to present as live rather than a stored snapshot.
+  static bool isRecentCapture(String? capturedAt,
+      {Duration within = const Duration(minutes: 2)}) {
+    if (capturedAt == null) return false;
+    final t = DateTime.tryParse(capturedAt.replaceFirst(' ', 'T'));
+    if (t == null) return false;
+    return DateTime.now().difference(t) < within;
+  }
+
+  /// Firebase Storage URL for an item icon. The app generates and uploads
+  /// PNGs; the CH display board uses a separate JPEG set (icons/{name}.jpg)
+  /// — ItemIcon tries both before generating a new one.
+  static String iconUrl(String itemName, {String extension = 'png'}) {
     final key = itemName.toLowerCase().trim();
-    final encoded = Uri.encodeComponent('icons/$key.png');
+    final encoded = Uri.encodeComponent('icons/$key.$extension');
     return 'https://firebasestorage.googleapis.com/v0/b'
         '/${AppConfig.storageBucket}/o/$encoded?alt=media';
   }

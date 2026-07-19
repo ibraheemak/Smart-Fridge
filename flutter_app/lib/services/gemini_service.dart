@@ -32,9 +32,11 @@ class GeminiService {
   /// Uses the same API key and endpoint as the ESP32-CAM.
   static Future<List<RecipeSuggestion>> getRecipes(
       List<FridgeItem> items) async {
-    if (AppConfig.geminiApiKey == 'YOUR_GEMINI_API_KEY') {
+    if (AppConfig.geminiApiKey.isEmpty ||
+        AppConfig.geminiApiKey.startsWith('YOUR_')) {
       throw Exception(
-          'Gemini API key not set — edit lib/config.dart and add your key.');
+          'Gemini API key not set — copy lib/app_secrets.dart.example to '
+          'lib/app_secrets.dart and add your key.');
     }
 
     final itemNames = items.map((i) => i.name).join(', ');

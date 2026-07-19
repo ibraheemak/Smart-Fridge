@@ -3,7 +3,6 @@ import 'app_secrets.dart';
 /// App configuration — fill in before running.
 ///
 /// Gemini key: copy app_secrets.dart.example → app_secrets.dart and fill in key.
-/// ESP32 IP: shown in serial monitor on CAM boot: [WEB] http://192.168.x.x/latest.jpg
 class AppConfig {
   // Gemini AI — recipe recommendations (same key as SECRETS.h)
   static const String geminiApiKey = AppSecrets.geminiApiKey;

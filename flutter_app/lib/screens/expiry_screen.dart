@@ -4,8 +4,16 @@ import '../services/fridge_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/item_icon.dart';
 
-class ExpiryScreen extends StatelessWidget {
+class ExpiryScreen extends StatefulWidget {
   const ExpiryScreen({super.key});
+
+  @override
+  State<ExpiryScreen> createState() => _ExpiryScreenState();
+}
+
+class _ExpiryScreenState extends State<ExpiryScreen> {
+  late final Stream<InventorySnapshot?> _invStream =
+      FridgeService.inventoryStream();
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +34,7 @@ class ExpiryScreen extends StatelessWidget {
                 fontWeight: FontWeight.w700)),
       ),
       body: StreamBuilder<InventorySnapshot?>(
-        stream: FridgeService.inventoryStream(),
+        stream: _invStream,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
             return const Center(

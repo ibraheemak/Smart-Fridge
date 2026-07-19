@@ -5,11 +5,12 @@ import '../services/fridge_service.dart';
 import '../services/icon_generator_service.dart';
 import '../theme/app_theme.dart';
 
-/// Smart item icon — 4-tier fallback:
+/// Smart item icon — 5-tier fallback:
 /// 1. Bundled asset  (assets/icons/{key}.png)  — instant, no network
-/// 2. Firebase Storage (icons/{key}.png)        — consistent across devices
-/// 3. Gemini AI generation                      — for new items
-/// 4. Coloured letter avatar                    — last resort
+/// 2. Firebase Storage (icons/{key}.png)        — app-generated set
+/// 3. Firebase Storage (icons/{key}.jpg)        — the CH display board's set
+/// 4. Gemini AI generation                      — for new items
+/// 5. Coloured letter avatar                    — last resort
 class ItemIcon extends StatefulWidget {
   final String itemName;
   final double size;
@@ -42,6 +43,23 @@ class _ItemIconState extends State<ItemIcon> {
   void initState() {
     super.initState();
     _loadAsset();
+  }
+
+  @override
+  void didUpdateWidget(ItemIcon old) {
+    super.didUpdateWidget(old);
+    // Grid cells are reused for different items when the list reorders or
+    // filters — without this reset the old item's image sticks around.
+    if (old.itemName != widget.itemName) {
+      setState(() {
+        _asset = null;
+        _assetChecked = false;
+        _generated = null;
+        _generating = false;
+        _generationFailed = false;
+      });
+      _loadAsset();
+    }
   }
 
   Future<void> _loadAsset() async {
@@ -102,7 +120,7 @@ class _ItemIconState extends State<ItemIcon> {
       return Image.memory(_generated!, fit: BoxFit.cover);
     }
 
-    // Tier 2: Firebase Storage
+    // Tier 2: Firebase Storage PNG (app-generated set)
     return CachedNetworkImage(
       imageUrl: FridgeService.iconUrl(widget.itemName),
       fit: BoxFit.cover,
@@ -112,22 +130,34 @@ class _ItemIconState extends State<ItemIcon> {
         itemName: widget.itemName,
         size: widget.size,
       ),
-      errorWidget: (ctx, _, __) {
-        // Storage miss → try Gemini in background
-        WidgetsBinding.instance
-            .addPostFrameCallback((_) => _startGeneration());
+      errorWidget: (_, __, ___) =>
+          // Tier 3: Storage JPEG — the set the CH display board uses
+          CachedNetworkImage(
+        imageUrl: FridgeService.iconUrl(widget.itemName, extension: 'jpg'),
+        fit: BoxFit.cover,
+        fadeInDuration: const Duration(milliseconds: 200),
+        placeholder: (_, __) => _Placeholder(
+          loading: true,
+          itemName: widget.itemName,
+          size: widget.size,
+        ),
+        errorWidget: (_, __, ___) {
+          // Storage miss on both sets → try Gemini in background
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _startGeneration());
 
-        if (_generating) {
-          return _Placeholder(
-            loading: true,
-            itemName: widget.itemName,
-            size: widget.size,
-            label: 'AI…',
-          );
-        }
-        // Tier 4: letter avatar
-        return _LetterAvatar(itemName: widget.itemName, size: widget.size);
-      },
+          if (_generating) {
+            return _Placeholder(
+              loading: true,
+              itemName: widget.itemName,
+              size: widget.size,
+              label: 'AI…',
+            );
+          }
+          // Tier 5: letter avatar
+          return _LetterAvatar(itemName: widget.itemName, size: widget.size);
+        },
+      ),
     );
   }
 }

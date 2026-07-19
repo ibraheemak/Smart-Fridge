@@ -1,17 +1,11 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
+/// 10 px colored dot: green = high confidence, amber = medium, red = low.
 class ConfidenceBadge extends StatelessWidget {
   final String confidence;
 
-  /// compact = true → 10 px dot, false → pill with label
-  final bool compact;
-
-  const ConfidenceBadge({
-    super.key,
-    required this.confidence,
-    this.compact = false,
-  });
+  const ConfidenceBadge({super.key, required this.confidence});
 
   Color get _color {
     switch (confidence) {
@@ -26,28 +20,10 @@ class ConfidenceBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (compact) {
-      return Container(
-        width: 10,
-        height: 10,
-        decoration: BoxDecoration(color: _color, shape: BoxShape.circle),
-      );
-    }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: _color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _color.withValues(alpha: 0.35)),
-      ),
-      child: Text(
-        confidence,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: _color,
-        ),
-      ),
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(color: _color, shape: BoxShape.circle),
     );
   }
 }

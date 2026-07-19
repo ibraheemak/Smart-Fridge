@@ -2,10 +2,20 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
+import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 
-class TemperatureScreen extends StatelessWidget {
+class TemperatureScreen extends StatefulWidget {
   const TemperatureScreen({super.key});
+
+  @override
+  State<TemperatureScreen> createState() => _TemperatureScreenState();
+}
+
+class _TemperatureScreenState extends State<TemperatureScreen> {
+  late final Stream<TemperatureReading?> _tempStream =
+      FridgeService.temperatureStream();
+  late final Stream<DoorStatus?> _doorStream = FridgeService.doorStream();
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +36,7 @@ class TemperatureScreen extends StatelessWidget {
                 fontWeight: FontWeight.w700)),
       ),
       body: StreamBuilder<TemperatureReading?>(
-        stream: FridgeService.temperatureStream(),
+        stream: _tempStream,
         builder: (context, snap) {
           final reading = snap.data;
           final temp = reading?.temperatureC;
@@ -38,7 +48,7 @@ class TemperatureScreen extends StatelessWidget {
             child: Column(
               children: [
                 // Door status — live from hall sensor
-                const _DoorStatusCard(),
+                _DoorStatusCard(doorStream: _doorStream),
                 const SizedBox(height: 16),
 
                 // Gauge + humidity row
@@ -126,7 +136,10 @@ class TemperatureScreen extends StatelessWidget {
                           reading == null
                               ? 'No sensor data yet. The DHT11 on the CAM board will push readings automatically.'
                               : isAlert
-                                  ? 'Temperature out of safe range (1–8°C)! Check door seal or compressor.'
+                                  ? 'Temperature out of safe range '
+                                      '(${SettingsService.getMinTemp().round()}–'
+                                      '${SettingsService.getMaxTemp().round()}°C)! '
+                                      'Check door seal or compressor.'
                                   : 'Optimal temperature. Your food is stored safely.',
                           style: TextStyle(
                             fontSize: 13,
@@ -152,12 +165,14 @@ class TemperatureScreen extends StatelessWidget {
 }
 
 class _DoorStatusCard extends StatelessWidget {
-  const _DoorStatusCard();
+  final Stream<DoorStatus?> doorStream;
+
+  const _DoorStatusCard({required this.doorStream});
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DoorStatus?>(
-      stream: FridgeService.doorStream(),
+      stream: doorStream,
       builder: (context, snap) {
         final door = snap.data;
         final isOpen = door?.isOpen ?? false;
@@ -170,16 +185,9 @@ class _DoorStatusCard extends StatelessWidget {
                 ? 'Door is OPEN'
                 : 'Door is closed';
 
-        String sub = 'Waiting for sensor...';
-        if (hasData) {
-          final diff = DateTime.now().difference(door.updatedAt);
-          final timeLabel = diff.inMinutes < 1
-              ? 'Just now'
-              : diff.inMinutes < 60
-                  ? '${diff.inMinutes}m ago'
-                  : '${diff.inHours}h ago';
-          sub = 'Updated: $timeLabel';
-        }
+        final sub = hasData
+            ? 'Updated: ${door.updatedAtLabel}'
+            : 'Waiting for sensor...';
 
         return Container(
           width: double.infinity,
@@ -403,7 +411,7 @@ class _StatCard extends StatelessWidget {
             Icon(icon, size: 28, color: iconColor),
             const SizedBox(height: 8),
             Text(value,
-                style: TextStyle(
+                style: const TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.w800,
                     color: AppColors.onSurface)),

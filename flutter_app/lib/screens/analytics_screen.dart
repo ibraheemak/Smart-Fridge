@@ -1,12 +1,41 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import '../models/fridge_item.dart';
 import '../models/scan_record.dart';
 import '../services/fridge_service.dart';
 import '../theme/app_theme.dart';
 import 'history_screen.dart';
 
-class AnalyticsScreen extends StatelessWidget {
+class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
+
+  @override
+  State<AnalyticsScreen> createState() => _AnalyticsScreenState();
+}
+
+class _AnalyticsScreenState extends State<AnalyticsScreen> {
+  late final Stream<List<ScanRecord>> _scanStream =
+      FridgeService.scanHistoryStream();
+  late final Stream<InventorySnapshot?> _invStream =
+      FridgeService.inventoryStream();
+  late final Stream<Map<String, int>> _boughtStream =
+      FridgeService.boughtCountsStream();
+  late final Future<int?> _totalScans = FridgeService.totalScanCount();
+
+  // Monday 00:00 of the current week.
+  static DateTime get _weekStart {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return today.subtract(Duration(days: today.weekday - 1));
+  }
+
+  int _scansThisWeek(List<ScanRecord> scans) {
+    final start = _weekStart;
+    return scans.where((s) {
+      final d = s.parsedTimestamp;
+      return d != null && !d.isBefore(start);
+    }).length;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +56,7 @@ class AnalyticsScreen extends StatelessWidget {
                 fontWeight: FontWeight.w700)),
       ),
       body: StreamBuilder<List<ScanRecord>>(
-        stream: FridgeService.scanHistoryStream(),
+        stream: _scanStream,
         builder: (context, snap) {
           final scans = snap.data ?? [];
 
@@ -39,23 +68,31 @@ class AnalyticsScreen extends StatelessWidget {
                 // Summary row
                 Row(
                   children: [
-                    _SummaryCard(
-                      label: 'Total Scans',
-                      value: '${scans.length}',
-                      icon: Icons.document_scanner_rounded,
-                      color: AppColors.primary,
+                    // True total from a server-side count — not capped at
+                    // the 20-scan history window.
+                    FutureBuilder<int?>(
+                      future: _totalScans,
+                      builder: (_, totalSnap) => _SummaryCard(
+                        label: 'Total Scans',
+                        value: totalSnap.data?.toString() ??
+                            (scans.isEmpty ? '—' : '${scans.length}+'),
+                        icon: Icons.document_scanner_rounded,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    StreamBuilder<InventorySnapshot?>(
+                      stream: _invStream,
+                      builder: (_, invSnap) => _SummaryCard(
+                        label: 'Items in Fridge',
+                        value: '${invSnap.data?.items.length ?? 0}',
+                        icon: Icons.inventory_2_rounded,
+                        color: AppColors.secondary,
+                      ),
                     ),
                     const SizedBox(width: 12),
                     _SummaryCard(
-                      label: 'Total Items',
-                      value:
-                          '${scans.fold<int>(0, (s, r) => s + r.itemCount)}',
-                      icon: Icons.inventory_2_rounded,
-                      color: AppColors.secondary,
-                    ),
-                    const SizedBox(width: 12),
-                    _SummaryCard(
-                      label: 'This Week',
+                      label: 'Scans This Week',
                       value: '${_scansThisWeek(scans)}',
                       icon: Icons.calendar_today_rounded,
                       color: AppColors.tertiaryFixedDim,
@@ -66,12 +103,19 @@ class AnalyticsScreen extends StatelessWidget {
                 const SizedBox(height: 20),
 
                 // Weekly activity chart
-                _WeeklyChart(scans: scans),
+                _WeeklyChart(scans: scans, weekStart: _weekStart),
 
                 const SizedBox(height: 20),
 
-                // Top items
-                _TopItems(scans: scans),
+                // Top items — from the firmware's monthly purchase counters,
+                // falling back to recent-scan frequency if none exist yet.
+                StreamBuilder<Map<String, int>>(
+                  stream: _boughtStream,
+                  builder: (_, boughtSnap) => _TopItems(
+                    boughtCounts: boughtSnap.data ?? {},
+                    scans: scans,
+                  ),
+                ),
 
                 const SizedBox(height: 20),
 
@@ -102,19 +146,6 @@ class AnalyticsScreen extends StatelessWidget {
         },
       ),
     );
-  }
-
-  int _scansThisWeek(List<ScanRecord> scans) {
-    final now = DateTime.now();
-    final weekStart = now.subtract(Duration(days: now.weekday - 1));
-    return scans.where((s) {
-      try {
-        final d = DateTime.parse(s.id);
-        return d.isAfter(weekStart);
-      } catch (_) {
-        return false;
-      }
-    }).length;
   }
 }
 
@@ -150,7 +181,7 @@ class _SummaryCard extends StatelessWidget {
             Icon(icon, size: 22, color: color),
             const SizedBox(height: 6),
             Text(value,
-                style: TextStyle(
+                style: const TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w800,
                     color: AppColors.onSurface)),
@@ -167,17 +198,16 @@ class _SummaryCard extends StatelessWidget {
 
 class _WeeklyChart extends StatelessWidget {
   final List<ScanRecord> scans;
+  final DateTime weekStart;
 
-  const _WeeklyChart({required this.scans});
+  const _WeeklyChart({required this.scans, required this.weekStart});
 
   List<double> _scansPerDay() {
     final counts = List<double>.filled(7, 0);
     for (final s in scans) {
-      try {
-        final d = DateTime.parse(s.id);
-        final idx = d.weekday - 1;
-        counts[idx]++;
-      } catch (_) {}
+      final d = s.parsedTimestamp;
+      if (d == null || d.isBefore(weekStart)) continue;
+      counts[d.weekday - 1]++;
     }
     return counts;
   }
@@ -283,11 +313,14 @@ class _WeeklyChart extends StatelessWidget {
 }
 
 class _TopItems extends StatelessWidget {
+  /// item name → times bought this month (from fridges/{id}/bought/{YYYY-MM},
+  /// maintained by the CAM firmware). Empty when no purchases recorded yet.
+  final Map<String, int> boughtCounts;
   final List<ScanRecord> scans;
 
-  const _TopItems({required this.scans});
+  const _TopItems({required this.boughtCounts, required this.scans});
 
-  Map<String, int> _itemCounts() {
+  Map<String, int> _scanCounts() {
     final counts = <String, int>{};
     for (final s in scans) {
       for (final item in s.items) {
@@ -299,7 +332,11 @@ class _TopItems extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final counts = _itemCounts();
+    final usingBought = boughtCounts.isNotEmpty;
+    final counts = usingBought
+        ? boughtCounts.map((k, v) => MapEntry(
+            k.isNotEmpty ? k[0].toUpperCase() + k.substring(1) : k, v))
+        : _scanCounts();
     if (counts.isEmpty) return const SizedBox.shrink();
     final sorted = counts.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
@@ -321,14 +358,17 @@ class _TopItems extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Top 5 Most Frequent Items',
-              style: TextStyle(
+          Text(usingBought ? 'Top Purchases This Month' : 'Top Detected Items',
+              style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
                   color: AppColors.onSurface)),
           const SizedBox(height: 4),
-          const Text('Detected across all your scans',
-              style: TextStyle(
+          Text(
+              usingBought
+                  ? 'Times each item was restocked this month'
+                  : 'Detected across the last ${scans.length} scans',
+              style: const TextStyle(
                   fontSize: 11, color: AppColors.onSurfaceVariant)),
           const SizedBox(height: 16),
           ...top.asMap().entries.map((entry) {

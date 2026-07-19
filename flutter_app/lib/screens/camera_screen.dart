@@ -24,6 +24,18 @@ class _CameraScreenState extends State<CameraScreen> {
   String _error = '';
   Timer? _timeoutTimer;
 
+  // capturedAt already stored in Firestore when the request went out —
+  // an emission with the same value is the stale photo, not our reply.
+  String? _staleCapturedAt;
+
+  // Held in state so rebuilds don't re-subscribe; recreated on roof switch.
+  late Stream<({Uint8List? photo, String? capturedAt})> _liveStream =
+      FridgeService.liveViewPhotoStream(_roof);
+  late final Stream<InventorySnapshot?> _invStream =
+      FridgeService.inventoryStream();
+  late final Stream<TemperatureReading?> _tempStream =
+      FridgeService.temperatureStream();
+
   @override
   void initState() {
     super.initState();
@@ -38,6 +50,8 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _requestSnapshot() async {
     _timeoutTimer?.cancel();
+    _staleCapturedAt = await FridgeService.currentLiveViewCapturedAt(_roof);
+    if (!mounted) return;
     setState(() {
       _requesting = true;
       _error = '';
@@ -70,7 +84,10 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   void _switchRoof() {
-    setState(() => _roof = _roof % AppConfig.numRoofs + 1);
+    setState(() {
+      _roof = _roof % AppConfig.numRoofs + 1;
+      _liveStream = FridgeService.liveViewPhotoStream(_roof);
+    });
     _requestSnapshot();
   }
 
@@ -131,13 +148,20 @@ class _CameraScreenState extends State<CameraScreen> {
               // ── Image frame ─────────────────────────────────────────────
               Expanded(
                 child: StreamBuilder<({Uint8List? photo, String? capturedAt})>(
-                  stream: FridgeService.liveViewPhotoStream(_roof),
+                  stream: _liveStream,
                   builder: (context, snap) {
                     final photo = snap.data?.photo;
-                    if (snap.hasData) {
+                    final capturedAt = snap.data?.capturedAt;
+                    // Only a photo newer than the one stored at request time
+                    // counts as the camera's reply — the stream's first
+                    // emission is whatever was already in Firestore.
+                    if (_requesting &&
+                        photo != null &&
+                        capturedAt != _staleCapturedAt) {
                       WidgetsBinding.instance
                           .addPostFrameCallback((_) => _onPhotoArrived());
                     }
+                    final isLive = FridgeService.isRecentCapture(capturedAt);
 
                     return ClipRRect(
                       borderRadius: BorderRadius.circular(20),
@@ -193,18 +217,24 @@ class _CameraScreenState extends State<CameraScreen> {
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 10, vertical: 5),
                                 decoration: BoxDecoration(
-                                  color: AppColors.error,
+                                  color: isLive
+                                      ? AppColors.error
+                                      : Colors.black54,
                                   borderRadius: BorderRadius.circular(20),
                                 ),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
-                                  children: const [
-                                    Icon(Icons.circle,
-                                        color: Colors.white, size: 6),
-                                    SizedBox(width: 5),
+                                  children: [
+                                    Icon(
+                                        isLive
+                                            ? Icons.circle
+                                            : Icons.history_rounded,
+                                        color: Colors.white,
+                                        size: isLive ? 6 : 10),
+                                    const SizedBox(width: 5),
                                     Text(
-                                      'LIVE',
-                                      style: TextStyle(
+                                      isLive ? 'LIVE' : 'SNAPSHOT',
+                                      style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 10,
                                         fontWeight: FontWeight.w800,
@@ -226,7 +256,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
               // Timestamp
               StreamBuilder<({Uint8List? photo, String? capturedAt})>(
-                stream: FridgeService.liveViewPhotoStream(_roof),
+                stream: _liveStream,
                 builder: (context, snap) {
                   final capturedAt = snap.data?.capturedAt;
                   if (capturedAt == null) return const SizedBox.shrink();
@@ -267,10 +297,10 @@ class _CameraScreenState extends State<CameraScreen> {
 
               // ── Insight cards ────────────────────────────────────────────
               StreamBuilder<InventorySnapshot?>(
-                stream: FridgeService.inventoryStream(),
+                stream: _invStream,
                 builder: (_, invSnap) {
                   return StreamBuilder<TemperatureReading?>(
-                    stream: FridgeService.temperatureStream(),
+                    stream: _tempStream,
                     builder: (_, tempSnap) {
                       final inv = invSnap.data;
                       final temp = tempSnap.data;
@@ -310,9 +340,11 @@ class _CameraScreenState extends State<CameraScreen> {
                                   value: temp?.temperatureC != null
                                       ? '${temp!.temperatureC!.toStringAsFixed(1)}°C'
                                       : '—',
-                                  subtitle: temp?.isOk == true
-                                      ? 'Optimal'
-                                      : 'Check sensor',
+                                  subtitle: temp?.temperatureC == null
+                                      ? 'No sensor data'
+                                      : temp!.isAlert
+                                          ? 'Out of range'
+                                          : 'Optimal',
                                 ),
                               ),
                             ],

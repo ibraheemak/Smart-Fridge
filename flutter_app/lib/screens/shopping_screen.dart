@@ -4,6 +4,7 @@ import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
 import '../services/gemini_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_top_bar.dart';
 
 const _staples = [
   'milk', 'eggs', 'butter', 'cheese', 'yogurt',
@@ -23,6 +24,12 @@ class _ShoppingScreenState extends State<ShoppingScreen> {
   final Set<String> _checkedEphemeral = {};
   final _addCtrl = TextEditingController();
   bool _aiLoading = false;
+
+  // Held in state so rebuilds don't re-subscribe mid-interaction.
+  late final Stream<InventorySnapshot?> _invStream =
+      FridgeService.inventoryStream();
+  late final Stream<List<ShoppingItem>> _listStream =
+      FridgeService.shoppingListStream();
 
   void _toggleEphemeral(String name) => setState(() =>
       _checkedEphemeral.contains(name)
@@ -103,7 +110,7 @@ class _ShoppingScreenState extends State<ShoppingScreen> {
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: StreamBuilder<InventorySnapshot?>(
-          stream: FridgeService.inventoryStream(),
+          stream: _invStream,
           builder: (ctx, invSnap) {
             final inFridge = invSnap.data?.items
                     .map((i) => i.name.toLowerCase())
@@ -118,7 +125,7 @@ class _ShoppingScreenState extends State<ShoppingScreen> {
                 [];
 
             return StreamBuilder<List<ShoppingItem>>(
-              stream: FridgeService.shoppingListStream(),
+              stream: _listStream,
               builder: (ctx, listSnap) {
                 final myList = listSnap.data ?? [];
 
@@ -127,38 +134,13 @@ class _ShoppingScreenState extends State<ShoppingScreen> {
                     lowConf
                         .where((n) => !_checkedEphemeral.contains(n))
                         .length;
-
-                final budget = (myList.where((i) => !i.checked).length * 20) +
-                    (missing.where((n) => !_checkedEphemeral.contains(n)).length * 15) +
-                    (lowConf.where((n) => !_checkedEphemeral.contains(n)).length * 12);
+                final checkedCount = myList.where((i) => i.checked).length +
+                    _checkedEphemeral.length;
 
                 return CustomScrollView(
                   slivers: [
                     // ── App Bar ────────────────────────────────────────────
-                    SliverAppBar(
-                      floating: true,
-                      backgroundColor: AppColors.background,
-                      elevation: 0,
-                      scrolledUnderElevation: 0,
-                      titleSpacing: 16,
-                      title: Text('Smart Fridge',
-                          style:
-                              Theme.of(context).textTheme.headlineMedium),
-                      actions: [
-                        Padding(
-                          padding: const EdgeInsets.only(right: 16),
-                          child: CircleAvatar(
-                            radius: 18,
-                            backgroundColor: AppColors.primaryFixed,
-                            child: const Text('SF',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.primary)),
-                          ),
-                        ),
-                      ],
-                    ),
+                    const AppTopBar(),
 
                     SliverToBoxAdapter(
                       child: Padding(
@@ -286,9 +268,9 @@ class _ShoppingScreenState extends State<ShoppingScreen> {
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: _StatChip(
-                                    icon: Icons.account_balance_wallet_rounded,
-                                    label: 'Est. Budget',
-                                    value: '₪$budget',
+                                    icon: Icons.check_circle_rounded,
+                                    label: 'Checked Off',
+                                    value: '$checkedCount',
                                     color: AppColors.secondary,
                                   ),
                                 ),
@@ -491,7 +473,7 @@ class _SectionHeader extends StatelessWidget {
         const SizedBox(width: 8),
         Text(
           label,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w700,
             color: AppColors.onSurface,
@@ -625,7 +607,7 @@ class _ShoppingItemTile extends StatelessWidget {
             if (onDelete != null)
               IconButton(
                 onPressed: onDelete,
-                icon: Icon(Icons.close_rounded,
+                icon: const Icon(Icons.close_rounded,
                     size: 16, color: AppColors.outline),
                 constraints:
                     const BoxConstraints(minWidth: 32, minHeight: 32),

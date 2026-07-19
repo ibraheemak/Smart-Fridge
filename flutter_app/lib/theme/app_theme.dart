@@ -5,8 +5,6 @@ class AppColors {
   // Primary — Deep Blue
   static const primary            = Color(0xFF1A237E);
   static const onPrimary          = Color(0xFFFFFFFF);
-  static const primaryContainer   = Color(0xFF1A237E);
-  static const onPrimaryContainer = Color(0xFF8690EE);
   static const primaryFixed       = Color(0xFFE0E0FF);
 
   // Secondary — Fresh Green
@@ -40,15 +38,9 @@ class AppColors {
   static const outline          = Color(0xFF767683);
   static const outlineVariant   = Color(0xFFC6C5D4);
 
-  // Legacy aliases (kept so existing code compiles unchanged)
-  static const card          = surfaceContainerLowest;
-  static const text          = onSurface;
-  static const textSecondary = onSurfaceVariant;
-  static const textHint      = outline;
-  static const success       = secondary;
-  static const warning       = tertiaryFixedDim;
-  static const divider       = surfaceContainerHigh;
-  static const shadow        = Color(0x141A237E);
+  // Semantic aliases for confidence indicators
+  static const success = secondary;
+  static const warning = tertiaryFixedDim;
 }
 
 class AppTheme {

@@ -15,6 +15,9 @@ class HistoryScreen extends StatefulWidget {
 class _HistoryScreenState extends State<HistoryScreen> {
   int _expanded = -1;
 
+  late final Stream<List<ScanRecord>> _scanStream =
+      FridgeService.scanHistoryStream();
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -35,7 +38,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 fontWeight: FontWeight.w700)),
       ),
       body: StreamBuilder<List<ScanRecord>>(
-        stream: FridgeService.scanHistoryStream(),
+        stream: _scanStream,
         builder: (context, snap) {
           final scans = snap.data ?? [];
 
@@ -331,8 +334,7 @@ class _ScanTile extends StatelessWidget {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          ConfidenceBadge(
-                              confidence: item.confidence, compact: true),
+                          ConfidenceBadge(confidence: item.confidence),
                           const SizedBox(width: 6),
                           Text(
                             '${item.displayName}  ·  ${item.quantity}',

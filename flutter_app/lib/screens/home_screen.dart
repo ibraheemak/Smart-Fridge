@@ -6,6 +6,7 @@ import '../models/scan_record.dart';
 import '../services/auth_service.dart';
 import '../services/fridge_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_top_bar.dart';
 import 'camera_screen.dart';
 import 'expiry_screen.dart';
 import 'temperature_screen.dart';
@@ -23,6 +24,23 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _liveRequesting = false;
   Timer? _liveTimeout;
 
+  // capturedAt of the photo already stored in Firestore when the request
+  // went out — a stream emission with the SAME value is the stale photo,
+  // not the reply to our request.
+  String? _staleCapturedAt;
+
+  // Streams held here so parent rebuilds don't re-subscribe (which would
+  // flash every card back to its loading state).
+  late final Stream<TemperatureReading?> _tempStream =
+      FridgeService.temperatureStream();
+  late final Stream<DoorStatus?> _doorStream = FridgeService.doorStream();
+  late final Stream<InventorySnapshot?> _invStream =
+      FridgeService.inventoryStream();
+  late final Stream<List<ScanRecord>> _scanStream =
+      FridgeService.scanHistoryStream();
+  late final Stream<({Uint8List? photo, String? capturedAt})> _liveStream =
+      FridgeService.liveViewPhotoStream(1);
+
   @override
   void initState() {
     super.initState();
@@ -38,6 +56,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _requestLiveView() async {
     if (_liveRequesting) return;
     _liveTimeout?.cancel();
+    _staleCapturedAt = await FridgeService.currentLiveViewCapturedAt(1);
+    if (!mounted) return;
     setState(() => _liveRequesting = true);
     try {
       await FridgeService.requestLiveViewSnapshot(1);
@@ -62,34 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: CustomScrollView(
           slivers: [
             // ── Top App Bar ────────────────────────────────────────────────
-            SliverAppBar(
-              floating: true,
-              backgroundColor: AppColors.background,
-              elevation: 0,
-              scrolledUnderElevation: 0,
-              titleSpacing: 16,
-              title: Text(
-                'Smart Fridge',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              actions: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: CircleAvatar(
-                    radius: 18,
-                    backgroundColor: AppColors.primaryFixed,
-                    child: const Text(
-                      'SF',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            const AppTopBar(),
 
             SliverToBoxAdapter(
               child: Padding(
@@ -108,19 +101,26 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      'Your fridge is running normally',
-                      style: Theme.of(context).textTheme.bodyMedium,
+                    _StatusSubtitle(
+                      tempStream: _tempStream,
+                      doorStream: _doorStream,
+                      invStream: _invStream,
                     ),
                     const SizedBox(height: 20),
 
                     // ── Status Cards Row ────────────────────────────────────
-                    _StatusCardsRow(),
+                    _StatusCardsRow(
+                      tempStream: _tempStream,
+                      doorStream: _doorStream,
+                      invStream: _invStream,
+                    ),
                     const SizedBox(height: 20),
 
                     // ── Live Fridge Card ────────────────────────────────────
                     _LiveFridgeCard(
+                      stream: _liveStream,
                       requesting: _liveRequesting,
+                      staleCapturedAt: _staleCapturedAt,
                       onPhotoArrived: _onLivePhotoArrived,
                       onRefresh: _requestLiveView,
                       onTap: () => Navigator.push(context,
@@ -138,7 +138,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 20),
 
                     // ── Recent Activity ─────────────────────────────────────
-                    _RecentActivity(),
+                    _RecentActivity(scanStream: _scanStream),
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -151,20 +151,95 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// ── Status subtitle — reflects the real fridge state ──────────────────────────
+class _StatusSubtitle extends StatelessWidget {
+  final Stream<TemperatureReading?> tempStream;
+  final Stream<DoorStatus?> doorStream;
+  final Stream<InventorySnapshot?> invStream;
+
+  const _StatusSubtitle({
+    required this.tempStream,
+    required this.doorStream,
+    required this.invStream,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<TemperatureReading?>(
+      stream: tempStream,
+      builder: (_, tempSnap) => StreamBuilder<DoorStatus?>(
+        stream: doorStream,
+        builder: (_, doorSnap) => StreamBuilder<InventorySnapshot?>(
+          stream: invStream,
+          builder: (_, invSnap) {
+            final temp = tempSnap.data;
+            final door = doorSnap.data;
+            final expiring = invSnap.data?.items.where((i) {
+                  final s = i.expiryStatus;
+                  return s == ExpiryStatus.expired ||
+                      s == ExpiryStatus.critical ||
+                      s == ExpiryStatus.soon;
+                }).length ??
+                0;
+
+            final String text;
+            final bool alert;
+            if (temp?.isAlert == true) {
+              text = 'Temperature alert — check the fridge!';
+              alert = true;
+            } else if (door?.isOpen == true) {
+              text = 'The fridge door is open';
+              alert = true;
+            } else if (expiring > 0) {
+              text =
+                  '$expiring item${expiring == 1 ? '' : 's'} need${expiring == 1 ? 's' : ''} attention';
+              alert = true;
+            } else if (temp == null && door == null) {
+              text = 'Waiting for sensor data…';
+              alert = false;
+            } else {
+              text = 'Everything looks good';
+              alert = false;
+            }
+
+            return Text(
+              text,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: alert ? AppColors.error : null,
+                    fontWeight: alert ? FontWeight.w600 : null,
+                  ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
 // ── Status Cards ──────────────────────────────────────────────────────────────
 class _StatusCardsRow extends StatelessWidget {
+  final Stream<TemperatureReading?> tempStream;
+  final Stream<DoorStatus?> doorStream;
+  final Stream<InventorySnapshot?> invStream;
+
+  const _StatusCardsRow({
+    required this.tempStream,
+    required this.doorStream,
+    required this.invStream,
+  });
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: 120,
       child: StreamBuilder<TemperatureReading?>(
-        stream: FridgeService.temperatureStream(),
+        stream: tempStream,
         builder: (ctx, tempSnap) {
           return StreamBuilder<DoorStatus?>(
-            stream: FridgeService.doorStream(),
+            stream: doorStream,
             builder: (ctx, doorSnap) {
               return StreamBuilder<InventorySnapshot?>(
-                stream: FridgeService.inventoryStream(),
+                stream: invStream,
                 builder: (ctx, invSnap) {
                   final temp = tempSnap.data;
                   final door = doorSnap.data;
@@ -331,13 +406,17 @@ class _StatusCard extends StatelessWidget {
 
 // ── Live Fridge Card ──────────────────────────────────────────────────────────
 class _LiveFridgeCard extends StatelessWidget {
+  final Stream<({Uint8List? photo, String? capturedAt})> stream;
   final bool requesting;
+  final String? staleCapturedAt;
   final VoidCallback onPhotoArrived;
   final VoidCallback onTap;
   final VoidCallback onRefresh;
 
   const _LiveFridgeCard({
+    required this.stream,
     required this.requesting,
+    required this.staleCapturedAt,
     required this.onPhotoArrived,
     required this.onTap,
     required this.onRefresh,
@@ -346,12 +425,16 @@ class _LiveFridgeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<({Uint8List? photo, String? capturedAt})>(
-      stream: FridgeService.liveViewPhotoStream(1),
+      stream: stream,
       builder: (_, snap) {
         final photo = snap.data?.photo;
-        if (snap.hasData && photo != null) {
+        final capturedAt = snap.data?.capturedAt;
+        // Only a photo NEWER than what was stored when we asked counts as
+        // the reply — the stream's first emission is the old stored photo.
+        if (requesting && photo != null && capturedAt != staleCapturedAt) {
           WidgetsBinding.instance.addPostFrameCallback((_) => onPhotoArrived());
         }
+        final isLive = FridgeService.isRecentCapture(capturedAt);
 
         return GestureDetector(
           onTap: onTap,
@@ -368,7 +451,7 @@ class _LiveFridgeCard extends StatelessWidget {
                       ? Image.memory(photo, fit: BoxFit.cover)
                       : Container(
                           color: AppColors.surfaceContainerHighest,
-                          child: Icon(
+                          child: const Icon(
                             Icons.videocam_rounded,
                             size: 64,
                             color: AppColors.outline,
@@ -388,13 +471,13 @@ class _LiveFridgeCard extends StatelessWidget {
                   ),
 
                   // Labels
-                  Positioned(
+                  const Positioned(
                     bottom: 14,
                     left: 16,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                        Text(
                           'INSIDE VIEW',
                           style: TextStyle(
                             color: Colors.white70,
@@ -403,8 +486,8 @@ class _LiveFridgeCard extends StatelessWidget {
                             letterSpacing: 0.5,
                           ),
                         ),
-                        const SizedBox(height: 2),
-                        const Text(
+                        SizedBox(height: 2),
+                        Text(
                           'Live Camera Feed',
                           style: TextStyle(
                             color: Colors.white,
@@ -416,8 +499,8 @@ class _LiveFridgeCard extends StatelessWidget {
                     ),
                   ),
 
-                  // LIVE badge
-                  if (photo != null)
+                  // LIVE badge — only for a photo captured moments ago
+                  if (photo != null && isLive)
                     Positioned(
                       top: 12,
                       right: 12,
@@ -585,6 +668,10 @@ class _QuickAction extends StatelessWidget {
 
 // ── Recent Activity ───────────────────────────────────────────────────────────
 class _RecentActivity extends StatelessWidget {
+  final Stream<List<ScanRecord>> scanStream;
+
+  const _RecentActivity({required this.scanStream});
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -604,16 +691,16 @@ class _RecentActivity extends StatelessWidget {
                 'Recent Activity',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
-              Icon(Icons.history_rounded, color: AppColors.onSurfaceVariant),
+              const Icon(Icons.history_rounded, color: AppColors.onSurfaceVariant),
             ],
           ),
           const SizedBox(height: 16),
           StreamBuilder<List<ScanRecord>>(
-            stream: FridgeService.scanHistoryStream(),
+            stream: scanStream,
             builder: (_, snap) {
               final scans = snap.data ?? [];
               if (scans.isEmpty) {
-                return _ActivityItem(
+                return const _ActivityItem(
                   icon: Icons.info_outline_rounded,
                   iconColor: AppColors.onSurfaceVariant,
                   bgColor: AppColors.surfaceContainerHigh,
@@ -684,7 +771,7 @@ class _ActivityItem extends StatelessWidget {
           children: [
             Container(
               padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 color: AppColors.surfaceContainerLowest,
                 shape: BoxShape.circle,
               ),
