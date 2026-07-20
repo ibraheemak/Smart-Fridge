@@ -441,17 +441,22 @@ class _LiveFridgeCard extends StatelessWidget {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(20),
             child: SizedBox(
-              height: 180,
+              height: 260,
               width: double.infinity,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Background
+                  // Background — show the whole rotated frame (letterboxed
+                  // over black) so nothing gets cropped.
                   photo != null
-                      // Camera is mounted rotated — turn the feed 90° CW.
-                      ? RotatedBox(
-                          quarterTurns: 1,
-                          child: Image.memory(photo, fit: BoxFit.cover),
+                      ? Container(
+                          color: Colors.black,
+                          alignment: Alignment.center,
+                          // Camera is mounted rotated — turn the feed 90° CW.
+                          child: RotatedBox(
+                            quarterTurns: 1,
+                            child: Image.memory(photo, fit: BoxFit.contain),
+                          ),
                         )
                       : Container(
                           color: AppColors.surfaceContainerHighest,
