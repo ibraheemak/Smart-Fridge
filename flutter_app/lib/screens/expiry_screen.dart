@@ -326,7 +326,7 @@ class _ExpiryCard extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         child: Row(
           children: [
-            ItemIcon(itemName: item.name, size: 52),
+            ItemIcon(itemName: item.name, barcode: item.barcode, size: 52),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -402,7 +402,7 @@ class _FreshCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ItemIcon(itemName: item.name, size: 48),
+            ItemIcon(itemName: item.name, barcode: item.barcode, size: 48),
             const Spacer(),
             Text(item.displayName,
                 style: const TextStyle(
