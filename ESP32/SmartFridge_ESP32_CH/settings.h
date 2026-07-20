@@ -34,6 +34,10 @@
 // Defined in notifications.h (included after this file). Logs an alert into the
 // persistent notifications list shown on the home "ALERTS" tile / list screen.
 void addNotification(const String& text);
+// Master toggle for the temperature/humidity out-of-range alert, set from the
+// alert-settings sub-screen. Defined in notifications.h; declared here so
+// checkEnvironmentAlert() below can honor it.
+extern bool g_env_alert_on;
 // Opens the alert-settings sub-screen (VIEW_NOTIF_SETTINGS) — retention window
 // + expiry-alert config. Reached from this Settings screen's "Alerts" row
 // "Options >" button; g_notif_settings_prev (touch.h) tells it to return here on Back.
@@ -162,6 +166,7 @@ void renderAlertScreen() {
 // while the alert is already up — it stays until the user taps CLOSE.
 void checkEnvironmentAlert() {
   if (g_view == VIEW_ALERT) return;
+  if (!g_env_alert_on) { g_alert_active = false; g_alert_dismissed = false; return; }
 
   String msg;
   bool oor = readingOutOfRange(msg);
@@ -187,6 +192,7 @@ void checkEnvironmentAlert() {
 // Called every loop() — shows a pending alert the moment the user is back on an
 // idle screen (it was deferred while they were mid-task).
 void serviceEnvironmentAlert() {
+  if (!g_env_alert_on) return;
   if (g_alert_active && g_view != VIEW_ALERT &&
       (g_view == VIEW_HOME || g_view == VIEW_LIST || g_view == VIEW_STATS)) {
     g_view = VIEW_ALERT;

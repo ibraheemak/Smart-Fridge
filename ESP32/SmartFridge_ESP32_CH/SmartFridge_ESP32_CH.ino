@@ -497,7 +497,7 @@ void loop() {
   if (doorOpenTooLong()) {
     Serial.println("[DOOR] Open too long — buzzing!");
     buzzFor(g_buzzer_duration_ms);
-    addNotification("Door left open");
+    if (g_door_alert_on) addNotification("Door left open");
   }
 
   updateBuzzer();
