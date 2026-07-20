@@ -5,7 +5,7 @@ import '../services/fridge_service.dart';
 import '../services/icon_generator_service.dart';
 import '../theme/app_theme.dart';
 
-/// Smart item icon — 5-tier fallback:
+/// Smart item icon — fallback chain:
 /// 1. Bundled asset  (assets/icons/{key}.png)  — instant, no network
 /// 2. Firebase Storage (icons/{key}.jpg)        — 350×350 baseline set shared
 ///    with the CH display board (what the app generates now)

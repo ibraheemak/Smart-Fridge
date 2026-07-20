@@ -9,9 +9,12 @@ class AppConfig {
   static const String geminiEndpoint =
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
-  // Image generation endpoint for food icons (Gemini image generation model)
+  // Image generation endpoint for food icons. Note: the older
+  // "gemini-2.0-flash-preview-image-generation" model was retired (404) —
+  // gemini-2.5-flash-image is the current image model on the generateContent
+  // API. Requires a key with quota (free tier or billing enabled).
   static const String geminiImageEndpoint =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent';
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent';
 
   // Must match FRIDGE_ID in parameters.h
   static const String fridgeId = 'fridge1';
