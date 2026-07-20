@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
@@ -22,9 +21,20 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen> {
   int _roof = 1;
   bool _requesting = false;
-  bool _scanning = false;
   String _error = '';
   Timer? _timeoutTimer;
+
+  // capturedAt already stored in Firestore when the request went out —
+  // an emission with the same value is the stale photo, not our reply.
+  String? _staleCapturedAt;
+
+  // Held in state so rebuilds don't re-subscribe; recreated on roof switch.
+  late Stream<({Uint8List? photo, String? capturedAt})> _liveStream =
+      FridgeService.liveViewPhotoStream(_roof);
+  late final Stream<InventorySnapshot?> _invStream =
+      FridgeService.inventoryStream();
+  late final Stream<TemperatureReading?> _tempStream =
+      FridgeService.temperatureStream();
 
   @override
   void initState() {
@@ -40,6 +50,8 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _requestSnapshot() async {
     _timeoutTimer?.cancel();
+    _staleCapturedAt = await FridgeService.currentLiveViewCapturedAt(_roof);
+    if (!mounted) return;
     setState(() {
       _requesting = true;
       _error = '';
@@ -72,37 +84,11 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   void _switchRoof() {
-    setState(() => _roof = _roof % AppConfig.numRoofs + 1);
+    setState(() {
+      _roof = _roof % AppConfig.numRoofs + 1;
+      _liveStream = FridgeService.liveViewPhotoStream(_roof);
+    });
     _requestSnapshot();
-  }
-
-  Future<void> _runAiScan() async {
-    if (_scanning) return;
-    setState(() => _scanning = true);
-    try {
-      await http
-          .get(Uri.parse('${AppConfig.esp32CamBaseUrl}/scan'))
-          .timeout(const Duration(seconds: 30));
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('AI scan triggered! Updating inventory...'),
-            backgroundColor: AppColors.secondary,
-          ),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Cannot reach ESP32-CAM to trigger scan.'),
-            backgroundColor: AppColors.error,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _scanning = false);
-    }
   }
 
   @override
@@ -119,6 +105,11 @@ class _CameraScreenState extends State<CameraScreen> {
               const SizedBox(height: 8),
               Row(
                 children: [
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.arrow_back_rounded,
+                        color: AppColors.onSurface),
+                  ),
                   Text('Live View',
                       style: Theme.of(context).textTheme.headlineMedium),
                   const Spacer(),
@@ -157,15 +148,20 @@ class _CameraScreenState extends State<CameraScreen> {
               // ── Image frame ─────────────────────────────────────────────
               Expanded(
                 child: StreamBuilder<({Uint8List? photo, String? capturedAt})>(
-                  stream: FridgeService.liveViewPhotoStream(_roof),
+                  stream: _liveStream,
                   builder: (context, snap) {
                     final photo = snap.data?.photo;
-                    if (snap.hasData) {
-                      // Defer to after this build so we don't call setState
-                      // while the widget tree is still building.
+                    final capturedAt = snap.data?.capturedAt;
+                    // Only a photo newer than the one stored at request time
+                    // counts as the camera's reply — the stream's first
+                    // emission is whatever was already in Firestore.
+                    if (_requesting &&
+                        photo != null &&
+                        capturedAt != _staleCapturedAt) {
                       WidgetsBinding.instance
                           .addPostFrameCallback((_) => _onPhotoArrived());
                     }
+                    final isLive = FridgeService.isRecentCapture(capturedAt);
 
                     return ClipRRect(
                       borderRadius: BorderRadius.circular(20),
@@ -213,7 +209,6 @@ class _CameraScreenState extends State<CameraScreen> {
                                   ),
                           ),
 
-                          // LIVE badge (when a photo is loaded)
                           if (photo != null)
                             Positioned(
                               top: 12,
@@ -222,18 +217,24 @@ class _CameraScreenState extends State<CameraScreen> {
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 10, vertical: 5),
                                 decoration: BoxDecoration(
-                                  color: AppColors.error,
+                                  color: isLive
+                                      ? AppColors.error
+                                      : Colors.black54,
                                   borderRadius: BorderRadius.circular(20),
                                 ),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
-                                  children: const [
-                                    Icon(Icons.circle,
-                                        color: Colors.white, size: 6),
-                                    SizedBox(width: 5),
+                                  children: [
+                                    Icon(
+                                        isLive
+                                            ? Icons.circle
+                                            : Icons.history_rounded,
+                                        color: Colors.white,
+                                        size: isLive ? 6 : 10),
+                                    const SizedBox(width: 5),
                                     Text(
-                                      'LIVE',
-                                      style: TextStyle(
+                                      isLive ? 'LIVE' : 'SNAPSHOT',
+                                      style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 10,
                                         fontWeight: FontWeight.w800,
@@ -255,7 +256,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
               // Timestamp
               StreamBuilder<({Uint8List? photo, String? capturedAt})>(
-                stream: FridgeService.liveViewPhotoStream(_roof),
+                stream: _liveStream,
                 builder: (context, snap) {
                   final capturedAt = snap.data?.capturedAt;
                   if (capturedAt == null) return const SizedBox.shrink();
@@ -271,58 +272,35 @@ class _CameraScreenState extends State<CameraScreen> {
 
               const SizedBox(height: 14),
 
-              // Buttons row
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _requesting ? null : _requestSnapshot,
-                      icon: _requesting
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.refresh_rounded),
-                      label: const Text('Refresh'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                    ),
+              // Refresh button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _requesting ? null : _requestSnapshot,
+                  icon: _requesting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.refresh_rounded),
+                  label: const Text('Refresh Photo'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _scanning ? null : _runAiScan,
-                      icon: _scanning
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.auto_awesome_rounded),
-                      label: Text(_scanning ? 'Scanning...' : 'Run AI Scan'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.secondary,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
 
               const SizedBox(height: 16),
 
               // ── Insight cards ────────────────────────────────────────────
               StreamBuilder<InventorySnapshot?>(
-                stream: FridgeService.inventoryStream(),
+                stream: _invStream,
                 builder: (_, invSnap) {
                   return StreamBuilder<TemperatureReading?>(
-                    stream: FridgeService.temperatureStream(),
+                    stream: _tempStream,
                     builder: (_, tempSnap) {
                       final inv = invSnap.data;
                       final temp = tempSnap.data;
@@ -346,9 +324,9 @@ class _CameraScreenState extends State<CameraScreen> {
                                 child: _InsightCard(
                                   icon: Icons.eco_rounded,
                                   color: AppColors.secondary,
-                                  title: 'Freshness',
+                                  title: 'Scan Quality',
                                   value: '$freshPct%',
-                                  subtitle: 'items are fresh',
+                                  subtitle: 'items clearly detected',
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -362,9 +340,11 @@ class _CameraScreenState extends State<CameraScreen> {
                                   value: temp?.temperatureC != null
                                       ? '${temp!.temperatureC!.toStringAsFixed(1)}°C'
                                       : '—',
-                                  subtitle: temp?.isOk == true
-                                      ? 'Optimal'
-                                      : 'Check sensor',
+                                  subtitle: temp?.temperatureC == null
+                                      ? 'No sensor data'
+                                      : temp!.isAlert
+                                          ? 'Out of range'
+                                          : 'Optimal',
                                 ),
                               ),
                             ],
@@ -384,7 +364,7 @@ class _CameraScreenState extends State<CameraScreen> {
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      'Low: ${low.map((i) => i.displayName).join(', ')}',
+                                      'Uncertain detection: ${low.map((i) => i.displayName).join(', ')}',
                                       style: const TextStyle(
                                           fontSize: 12,
                                           color: AppColors.error,

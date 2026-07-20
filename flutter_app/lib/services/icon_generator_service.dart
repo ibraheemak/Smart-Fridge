@@ -10,7 +10,7 @@ import '../config.dart';
 /// Style is locked to "flat vector icon with bold black outline on white"
 /// so all items look like they belong to the same icon pack.
 class IconGeneratorService {
-  static const _model = 'gemini-3.1-flash-image';
+  // Uses Gemini image generation — model set in AppConfig.geminiImageEndpoint
 
   // All icons in the same flat-vector style pack
   static const _prompt =
@@ -48,9 +48,6 @@ class IconGeneratorService {
     }
   }
 
-  static bool isCached(String itemName) =>
-      _cache.containsKey(_key(itemName));
-
   // ── Private ────────────────────────────────────────────────────────────────
 
   static Future<Uint8List?> _fetch(String key, String itemName) async {
@@ -69,9 +66,7 @@ class IconGeneratorService {
 
       final res = await http
           .post(
-            Uri.parse(
-                'https://generativelanguage.googleapis.com/v1beta'
-                '/models/$_model:generateContent'),
+            Uri.parse(AppConfig.geminiImageEndpoint),
             headers: {
               'Content-Type': 'application/json',
               'X-goog-api-key': AppConfig.geminiApiKey,

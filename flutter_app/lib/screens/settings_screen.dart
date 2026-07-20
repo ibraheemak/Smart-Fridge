@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/fridge_service.dart';
 import '../services/icon_generator_service.dart';
+import '../services/fridge_session.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import 'analytics_screen.dart';
@@ -17,42 +18,24 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  // Door
-  late double _doorTimer;
-  late bool _buzzer;
-  late bool _mobileAlerts;
-  // Temperature
   late double _minTemp;
   late double _maxTemp;
-  late bool _tempAlerts;
-  // Camera
-  late double _scanDelay;
-  late bool _autoScan;
-  late bool _flashOnScan;
-  // Expiry
   late int _expiryDays;
-  late bool _dailySummary;
 
   @override
   void initState() {
     super.initState();
-    _doorTimer = SettingsService.getDoorOpenTimer();
-    _buzzer = SettingsService.getBuzzerEnabled();
-    _mobileAlerts = SettingsService.getMobileAlerts();
     _minTemp = SettingsService.getMinTemp();
     _maxTemp = SettingsService.getMaxTemp();
-    _tempAlerts = SettingsService.getTempAlerts();
-    _scanDelay = SettingsService.getScanDelay();
-    _autoScan = SettingsService.getAutoScan();
-    _flashOnScan = SettingsService.getFlashOnScan();
     _expiryDays = SettingsService.getExpiryWarningDays();
-    _dailySummary = SettingsService.getDailySummary();
   }
 
   @override
   Widget build(BuildContext context) {
     final user = AuthService.currentUser;
     final name = AuthService.displayName;
+    // Alert thresholds and icon regeneration are Homeowner-only.
+    final isAdmin = FridgeSession.isAdmin;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -79,62 +62,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                   const SizedBox(height: 20),
 
-                  // Door Settings
+                  // Alert preferences — Homeowner-only; drive the alert logic
                   _SettingsSection(
-                    title: 'Door Settings',
-                    icon: Icons.door_front_door_rounded,
+                    title: 'Alert Preferences',
+                    icon: Icons.notifications_active_rounded,
                     iconColor: AppColors.primary,
                     children: [
-                      _SliderTile(
-                        label: 'Open Alert Timer',
-                        value: _doorTimer,
-                        min: 10,
-                        max: 120,
-                        divisions: 11,
-                        format: (v) => '${v.round()}s',
-                        onChanged: (v) {
-                          setState(() => _doorTimer = v);
-                          SettingsService.setDoorOpenTimer(v);
-                        },
-                      ),
-                      _SwitchTile(
-                        label: 'Buzzer Alert',
-                        subtitle: 'Sound alert when door is left open',
-                        value: _buzzer,
-                        onChanged: (v) {
-                          setState(() => _buzzer = v);
-                          SettingsService.setBuzzerEnabled(v);
-                        },
-                      ),
-                      _SwitchTile(
-                        label: 'Mobile Notifications',
-                        subtitle: 'Push alert when door is open too long',
-                        value: _mobileAlerts,
-                        onChanged: (v) {
-                          setState(() => _mobileAlerts = v);
-                          SettingsService.setMobileAlerts(v);
-                        },
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Temperature Settings
-                  _SettingsSection(
-                    title: 'Temperature Settings',
-                    icon: Icons.thermostat_rounded,
-                    iconColor: const Color(0xFF0288D1),
-                    children: [
+                      if (!isAdmin)
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(16, 10, 16, 0),
+                          child: Row(
+                            children: [
+                              Icon(Icons.lock_outline_rounded,
+                                  size: 14,
+                                  color: AppColors.onSurfaceVariant),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                    'Only the manager can change these.',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: AppColors.onSurfaceVariant)),
+                              ),
+                            ],
+                          ),
+                        ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                         child: Row(
                           children: [
-                            const Text('Desired Range',
-                                style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600)),
-                            const Spacer(),
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Safe Temperature Range',
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600)),
+                                  Text(
+                                      'Outside this range the app shows a temperature alert',
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: AppColors.onSurfaceVariant)),
+                                ],
+                              ),
+                            ),
                             Text(
                                 '${_minTemp.round()}°C – ${_maxTemp.round()}°C',
                                 style: const TextStyle(
@@ -153,90 +125,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           divisions: 10,
                           activeColor: AppColors.primary,
                           inactiveColor: AppColors.outlineVariant,
-                          onChanged: (r) {
-                            setState(() {
-                              _minTemp = r.start;
-                              _maxTemp = r.end;
-                            });
-                            SettingsService.setMinTemp(r.start);
-                            SettingsService.setMaxTemp(r.end);
-                          },
+                          onChanged: isAdmin
+                              ? (r) {
+                                  setState(() {
+                                    _minTemp = r.start;
+                                    _maxTemp = r.end;
+                                  });
+                                  SettingsService.setMinTemp(r.start);
+                                  SettingsService.setMaxTemp(r.end);
+                                }
+                              : null,
                         ),
                       ),
-                      _SwitchTile(
-                        label: 'Deviation Alerts',
-                        subtitle: 'Alert when temperature goes out of range',
-                        value: _tempAlerts,
-                        onChanged: (v) {
-                          setState(() => _tempAlerts = v);
-                          SettingsService.setTempAlerts(v);
-                        },
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Camera Settings
-                  _SettingsSection(
-                    title: 'Camera Settings',
-                    icon: Icons.camera_alt_rounded,
-                    iconColor: AppColors.secondary,
-                    children: [
-                      _SliderTile(
-                        label: 'Auto Scan Interval',
-                        value: _scanDelay,
-                        min: 5,
-                        max: 60,
-                        divisions: 11,
-                        format: (v) => '${v.round()} min',
-                        onChanged: (v) {
-                          setState(() => _scanDelay = v);
-                          SettingsService.setScanDelay(v);
-                        },
-                      ),
-                      _SwitchTile(
-                        label: 'Auto Scan on Door Close',
-                        subtitle: 'Automatically scan when door closes',
-                        value: _autoScan,
-                        onChanged: (v) {
-                          setState(() => _autoScan = v);
-                          SettingsService.setAutoScan(v);
-                        },
-                      ),
-                      _SwitchTile(
-                        label: 'Flash During Scan',
-                        subtitle: 'Use LED strip for better image quality',
-                        value: _flashOnScan,
-                        onChanged: (v) {
-                          setState(() => _flashOnScan = v);
-                          SettingsService.setFlashOnScan(v);
-                        },
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Expiry Settings
-                  _SettingsSection(
-                    title: 'Expiry Settings',
-                    icon: Icons.event_rounded,
-                    iconColor: AppColors.tertiaryFixedDim,
-                    children: [
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                         child: Row(
                           children: [
                             const Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('Advance Warning',
+                                  Text('Expiry Advance Warning',
                                       style: TextStyle(
                                           fontSize: 14,
                                           fontWeight: FontWeight.w600)),
-                                  Text('Alert before expiry date',
+                                  Text(
+                                      'Items expiring within this many days are marked critical',
                                       style: TextStyle(
                                           fontSize: 11,
                                           color: AppColors.onSurfaceVariant)),
@@ -247,7 +161,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               children: [
                                 _StepButton(
                                   icon: Icons.remove,
-                                  onTap: _expiryDays > 1
+                                  onTap: isAdmin && _expiryDays > 1
                                       ? () {
                                           setState(() => _expiryDays--);
                                           SettingsService
@@ -265,7 +179,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                                 _StepButton(
                                   icon: Icons.add,
-                                  onTap: _expiryDays < 14
+                                  onTap: isAdmin && _expiryDays < 7
                                       ? () {
                                           setState(() => _expiryDays++);
                                           SettingsService
@@ -277,15 +191,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ],
                         ),
-                      ),
-                      _SwitchTile(
-                        label: 'Daily Expiry Summary',
-                        subtitle: 'Morning notification with today\'s expirations',
-                        value: _dailySummary,
-                        onChanged: (v) {
-                          setState(() => _dailySummary = v);
-                          SettingsService.setDailySummary(v);
-                        },
                       ),
                     ],
                   ),
@@ -334,10 +239,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ],
                         ),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                        child: _RegenerateIconsButton(),
-                      ),
+                      if (isAdmin)
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                          child: _RegenerateIconsButton(),
+                        ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                         child: SizedBox(
@@ -399,8 +305,8 @@ class _QuickLinks extends StatelessWidget {
                 builder: (_) => const TemperatureScreen())),
       ),
       _QuickLink(
-        icon: Icons.people_rounded,
-        label: 'Users',
+        icon: Icons.person_rounded,
+        label: 'Account',
         color: AppColors.secondary,
         onTap: () => Navigator.push(
             context,
@@ -421,7 +327,7 @@ class _QuickLinks extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Hello, $name 👋',
+        Text('Hello, $name',
             style: Theme.of(context)
                 .textTheme
                 .titleLarge
@@ -534,103 +440,6 @@ class _SettingsSection extends StatelessWidget {
   }
 }
 
-class _SliderTile extends StatelessWidget {
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final int divisions;
-  final String Function(double) format;
-  final ValueChanged<double> onChanged;
-
-  const _SliderTile({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.divisions,
-    required this.format,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Text(label,
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600)),
-              const Spacer(),
-              Text(format(value),
-                  style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.primary)),
-            ],
-          ),
-          Slider(
-            value: value,
-            min: min,
-            max: max,
-            divisions: divisions,
-            activeColor: AppColors.primary,
-            inactiveColor: AppColors.outlineVariant,
-            onChanged: onChanged,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SwitchTile extends StatelessWidget {
-  final String label;
-  final String subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _SwitchTile({
-    required this.label,
-    required this.subtitle,
-    required this.value,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label,
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600)),
-                Text(subtitle,
-                    style: const TextStyle(
-                        fontSize: 11, color: AppColors.onSurfaceVariant)),
-              ],
-            ),
-          ),
-          Switch(
-            value: value,
-            thumbColor: WidgetStateProperty.resolveWith(
-                (s) => s.contains(WidgetState.selected) ? AppColors.primary : null),
-            onChanged: onChanged,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _StepButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
@@ -661,6 +470,8 @@ class _StepButton extends StatelessWidget {
 }
 
 class _RegenerateIconsButton extends StatefulWidget {
+  const _RegenerateIconsButton();
+
   @override
   State<_RegenerateIconsButton> createState() =>
       _RegenerateIconsButtonState();
@@ -680,6 +491,7 @@ class _RegenerateIconsButtonState extends State<_RegenerateIconsButton> {
       // Fetch current item names from Firestore (one-shot)
       final snap = await FridgeService.inventoryStream().first;
       final names = snap?.items.map((i) => i.name).toList() ?? [];
+      if (!mounted) return;
 
       if (names.isEmpty) {
         setState(() {

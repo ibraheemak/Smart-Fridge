@@ -20,6 +20,11 @@
 // ----------------------------------------------------------------------------
 // FRIDGE IDENTITY
 // ----------------------------------------------------------------------------
+// Unique per physical fridge. The app links users to a fridge by this exact
+// ID (shown on the CH board's TFT); the first user to connect it becomes its
+// manager. For a multi-fridge deployment give each unit a distinct serial
+// (e.g. "SF-0001") and flash the SAME value to this fridge's CH + all its CAM
+// boards. Must match FRIDGE_ID in SmartFridge_ESP32_CH.
 #define FRIDGE_ID  "fridge1"
 
 // ----------------------------------------------------------------------------

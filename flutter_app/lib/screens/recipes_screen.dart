@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/fridge_service.dart';
 import '../services/gemini_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_top_bar.dart';
 
 class RecipesScreen extends StatefulWidget {
   const RecipesScreen({super.key});
@@ -18,6 +19,45 @@ class _RecipesScreenState extends State<RecipesScreen> {
 
   final _filters = ['All', 'Breakfast', 'Vegetarian', 'Quick (≤15 min)'];
 
+  // Meat keywords for vegetarian filter
+  static const _meatKeywords = [
+    'chicken', 'beef', 'fish', 'lamb', 'pork', 'meat',
+    'turkey', 'bacon', 'ham', 'tuna', 'shrimp', 'salmon', 'sausage',
+  ];
+
+  // Breakfast keywords
+  static const _breakfastKeywords = [
+    'breakfast', 'omelette', 'omelet', 'pancake', 'cereal',
+    'toast', 'smoothie', 'granola', 'waffle', 'french toast', 'scrambled egg',
+    'muffin', 'porridge', 'oatmeal',
+  ];
+
+  List<RecipeSuggestion> get _filtered {
+    final all = _recipes ?? [];
+    if (_filter == 'All') return all;
+    if (_filter == 'Breakfast') {
+      return all.where((r) {
+        final lower = '${r.name} ${r.description}'.toLowerCase();
+        return _breakfastKeywords.any((k) => lower.contains(k));
+      }).toList();
+    }
+    if (_filter == 'Vegetarian') {
+      return all.where((r) {
+        final allIngredients = r.ingredients.join(' ').toLowerCase();
+        return !_meatKeywords.any((m) => allIngredients.contains(m));
+      }).toList();
+    }
+    if (_filter == 'Quick (≤15 min)') {
+      return all.where((r) {
+        if (r.time.toLowerCase().contains('hour')) return false;
+        final m = RegExp(r'(\d+)').firstMatch(r.time);
+        if (m == null) return false;
+        return int.parse(m.group(1)!) <= 15;
+      }).toList();
+    }
+    return all;
+  }
+
   Future<void> _fetchRecipes() async {
     setState(() {
       _loading = true;
@@ -25,13 +65,16 @@ class _RecipesScreenState extends State<RecipesScreen> {
     });
     try {
       final inv = await FridgeService.inventoryStream().first;
+      if (!mounted) return;
       if (inv == null || inv.items.isEmpty) {
         setState(() => _error = 'Fridge is empty — run a scan first.');
         return;
       }
       final result = await GeminiService.getRecipes(inv.items);
+      if (!mounted) return;
       setState(() => _recipes = result);
     } catch (e) {
+      if (!mounted) return;
       setState(() =>
           _error = e.toString().replaceFirst('Exception: ', ''));
     } finally {
@@ -41,40 +84,15 @@ class _RecipesScreenState extends State<RecipesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final filtered = _filtered;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: CustomScrollView(
           slivers: [
             // ── App Bar ────────────────────────────────────────────────────
-            SliverAppBar(
-              floating: true,
-              backgroundColor: AppColors.background,
-              elevation: 0,
-              scrolledUnderElevation: 0,
-              titleSpacing: 16,
-              title: Text('Smart Fridge',
-                  style: Theme.of(context).textTheme.headlineMedium),
-              actions: [
-                IconButton(
-                  onPressed: () {},
-                  icon: const Icon(Icons.notifications_outlined,
-                      color: AppColors.primary),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: CircleAvatar(
-                    radius: 18,
-                    backgroundColor: AppColors.primaryFixed,
-                    child: const Text('SF',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary)),
-                  ),
-                ),
-              ],
-            ),
+            const AppTopBar(),
 
             SliverToBoxAdapter(
               child: Padding(
@@ -108,19 +126,16 @@ class _RecipesScreenState extends State<RecipesScreen> {
                           final f = _filters[i];
                           final active = f == _filter;
                           return GestureDetector(
-                            onTap: () =>
-                                setState(() => _filter = f),
+                            onTap: () => setState(() => _filter = f),
                             child: AnimatedContainer(
-                              duration:
-                                  const Duration(milliseconds: 180),
+                              duration: const Duration(milliseconds: 180),
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 20, vertical: 6),
                               decoration: BoxDecoration(
                                 color: active
                                     ? AppColors.secondaryContainer
                                     : AppColors.surfaceContainerHigh,
-                                borderRadius:
-                                    BorderRadius.circular(20),
+                                borderRadius: BorderRadius.circular(20),
                               ),
                               child: Text(
                                 f,
@@ -169,7 +184,7 @@ class _RecipesScreenState extends State<RecipesScreen> {
                         Container(
                           width: 80,
                           height: 80,
-                          decoration: BoxDecoration(
+                          decoration: const BoxDecoration(
                             color: AppColors.primaryFixed,
                             shape: BoxShape.circle,
                           ),
@@ -214,6 +229,35 @@ class _RecipesScreenState extends State<RecipesScreen> {
                   ),
                 ),
               )
+            else if (filtered.isEmpty)
+              SliverFillRemaining(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.filter_list_rounded,
+                            size: 56, color: AppColors.outline),
+                        const SizedBox(height: 16),
+                        Text('No matches for "$_filter"',
+                            style: Theme.of(context).textTheme.titleLarge),
+                        const SizedBox(height: 8),
+                        const Text(
+                            'Try a different filter or regenerate recipes.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: AppColors.onSurfaceVariant)),
+                        const SizedBox(height: 20),
+                        TextButton(
+                          onPressed: () => setState(() => _filter = 'All'),
+                          child: const Text('Clear filter'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              )
             else
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
@@ -223,21 +267,18 @@ class _RecipesScreenState extends State<RecipesScreen> {
                       if (i == 0) {
                         return Column(
                           children: [
-                            // Featured card
-                            _FeaturedRecipeCard(recipe: _recipes!.first),
+                            _FeaturedRecipeCard(recipe: filtered.first),
                             const SizedBox(height: 16),
-                            // Regenerate
                           ],
                         );
                       }
-                      if (i <= _recipes!.length - 1) {
+                      if (i <= filtered.length - 1) {
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 12),
-                          child: _RecipeCard(
-                              recipe: _recipes![i]),
+                          child: _RecipeCard(recipe: filtered[i]),
                         );
                       }
-                      // Regenerate button at end
+                      // Regenerate at end
                       return Padding(
                         padding: const EdgeInsets.only(top: 8, bottom: 16),
                         child: Center(
@@ -246,20 +287,17 @@ class _RecipesScreenState extends State<RecipesScreen> {
                             icon: const Icon(Icons.refresh_rounded,
                                 color: AppColors.primary),
                             label: const Text('Regenerate',
-                                style:
-                                    TextStyle(color: AppColors.primary)),
+                                style: TextStyle(color: AppColors.primary)),
                             style: OutlinedButton.styleFrom(
-                              side: const BorderSide(
-                                  color: AppColors.primary),
+                              side: const BorderSide(color: AppColors.primary),
                               shape: RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius.circular(12)),
+                                  borderRadius: BorderRadius.circular(12)),
                             ),
                           ),
                         ),
                       );
                     },
-                    childCount: _recipes!.length + 1,
+                    childCount: filtered.length + 1,
                   ),
                 ),
               ),
@@ -332,20 +370,14 @@ class _FeaturedRecipeCard extends StatelessWidget {
                 const Icon(Icons.schedule_rounded,
                     color: Colors.white70, size: 14),
                 const SizedBox(width: 4),
-                Text(
-                  recipe.time,
-                  style: const TextStyle(
-                      color: Colors.white70, fontSize: 13),
-                ),
+                Text(recipe.time,
+                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
                 const SizedBox(width: 16),
                 const Icon(Icons.restaurant_rounded,
                     color: Colors.white70, size: 14),
                 const SizedBox(width: 4),
-                Text(
-                  recipe.difficulty,
-                  style: const TextStyle(
-                      color: Colors.white70, fontSize: 13),
-                ),
+                Text(recipe.difficulty,
+                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
               ],
             ),
           ],
@@ -426,7 +458,7 @@ class _RecipeCard extends StatelessWidget {
             // Time
             Row(
               children: [
-                Icon(Icons.timer_rounded,
+                const Icon(Icons.timer_rounded,
                     size: 13, color: AppColors.onSurfaceVariant),
                 const SizedBox(width: 4),
                 Text(recipe.time,
@@ -460,8 +492,7 @@ class _RecipeCard extends StatelessWidget {
                     child: Text(
                       ing,
                       style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.onSurface),
+                          fontSize: 11, color: AppColors.onSurface),
                     ),
                   );
                 }).toList(),

@@ -37,6 +37,11 @@
 // ----------------------------------------------------------------------------
 // FRIDGE IDENTITY — must match the value used by SmartFridge_ESP32_CAM
 // ----------------------------------------------------------------------------
+// Unique per physical fridge. The app links users to a fridge by this exact
+// ID; the first user to connect it becomes its manager, others join pending
+// the manager's approval. For a multi-fridge deployment give each unit a
+// distinct serial (e.g. "SF-0001"); consider showing it on the TFT so users
+// can read it. Flash the same value to this fridge's CAM board(s).
 #define FRIDGE_ID  "fridge1"
 
 // ----------------------------------------------------------------------------

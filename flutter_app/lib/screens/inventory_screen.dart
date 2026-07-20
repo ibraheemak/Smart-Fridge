@@ -3,6 +3,7 @@ import 'package:shimmer/shimmer.dart';
 import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_top_bar.dart';
 import '../widgets/item_icon.dart';
 import 'expiry_screen.dart';
 
@@ -17,7 +18,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
   String _filter = 'All';
   String _search = '';
 
-  final _filters = ['All', 'Fresh', 'Expiring Soon', 'Expired'];
+  final _filters = ['All', 'Fresh', 'Expiring Soon', 'Expired', 'No Date'];
+
+  // Held in state so typing in the search box doesn't re-subscribe and
+  // flash the loading skeleton on every keystroke.
+  late final Stream<InventorySnapshot?> _invStream =
+      FridgeService.inventoryStream();
 
   @override
   Widget build(BuildContext context) {
@@ -25,7 +31,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: StreamBuilder<InventorySnapshot?>(
-          stream: FridgeService.inventoryStream(),
+          stream: _invStream,
           builder: (ctx, snap) {
             final isLoading =
                 snap.connectionState == ConnectionState.waiting;
@@ -33,7 +39,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
             List<FridgeItem> items = inv?.items ?? [];
 
-            // Filter
+            // Search
             if (_search.isNotEmpty) {
               items = items
                   .where((i) => i.name
@@ -41,53 +47,32 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       .contains(_search.toLowerCase()))
                   .toList();
             }
+
+            // Filter by expiry status
             if (_filter == 'Fresh') {
-              items =
-                  items.where((i) => i.confidence == 'high').toList();
+              items = items
+                  .where((i) => i.expiryStatus == ExpiryStatus.ok)
+                  .toList();
             } else if (_filter == 'Expiring Soon') {
-              items =
-                  items.where((i) => i.confidence == 'medium').toList();
+              items = items
+                  .where((i) =>
+                      i.expiryStatus == ExpiryStatus.critical ||
+                      i.expiryStatus == ExpiryStatus.soon)
+                  .toList();
             } else if (_filter == 'Expired') {
-              items =
-                  items.where((i) => i.confidence == 'low').toList();
+              items = items
+                  .where((i) => i.expiryStatus == ExpiryStatus.expired)
+                  .toList();
+            } else if (_filter == 'No Date') {
+              items = items
+                  .where((i) => i.expiryStatus == ExpiryStatus.unknown)
+                  .toList();
             }
 
             return CustomScrollView(
               slivers: [
                 // ── App Bar ──────────────────────────────────────────────
-                SliverAppBar(
-                  floating: true,
-                  backgroundColor: AppColors.background,
-                  elevation: 0,
-                  scrolledUnderElevation: 0,
-                  titleSpacing: 16,
-                  title: Text(
-                    'Smart Fridge',
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  actions: [
-                    IconButton(
-                      onPressed: () {},
-                      icon: const Icon(Icons.notifications_outlined,
-                          color: AppColors.primary),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(right: 16),
-                      child: CircleAvatar(
-                        radius: 18,
-                        backgroundColor: AppColors.primaryFixed,
-                        child: const Text(
-                          'SF',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                const AppTopBar(),
 
                 SliverToBoxAdapter(
                   child: Padding(
@@ -105,12 +90,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
                           child: TextField(
                             onChanged: (v) =>
                                 setState(() => _search = v),
-                            decoration: InputDecoration(
+                            decoration: const InputDecoration(
                               hintText: 'Search fridge...',
-                              prefixIcon: const Icon(Icons.search_rounded,
+                              prefixIcon: Icon(Icons.search_rounded,
                                   color: AppColors.outline),
                               border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
+                              contentPadding: EdgeInsets.symmetric(
                                   vertical: 12),
                             ),
                           ),
@@ -163,10 +148,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         // ── Expiry Alerts Banner ──────────────────────────
                         if (inv != null)
                           Builder(builder: (ctx) {
-                            final lowCount = inv.items
-                                .where((i) => i.confidence == 'low')
+                            final alertCount = inv.items
+                                .where((i) =>
+                                    i.expiryStatus == ExpiryStatus.expired ||
+                                    i.expiryStatus == ExpiryStatus.critical ||
+                                    i.expiryStatus == ExpiryStatus.soon)
                                 .length;
-                            if (lowCount == 0) return const SizedBox.shrink();
+                            if (alertCount == 0) return const SizedBox.shrink();
                             return GestureDetector(
                               onTap: () => Navigator.push(
                                   context,
@@ -186,7 +174,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        '$lowCount item${lowCount == 1 ? '' : 's'} need attention — check expiry',
+                                        '$alertCount item${alertCount == 1 ? '' : 's'} expiring soon — tap to view',
                                         style: const TextStyle(
                                             fontSize: 13,
                                             fontWeight: FontWeight.w600,
@@ -236,30 +224,42 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
+                            const Icon(
                               Icons.kitchen_rounded,
                               size: 72,
                               color: AppColors.outline,
                             ),
                             const SizedBox(height: 16),
-                            Text(
-                              inv == null
-                                  ? 'Fridge is empty'
-                                  : 'No items match',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleLarge,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              inv == null
-                                  ? 'Close the door to trigger an auto-scan'
-                                  : 'Try a different search or filter',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium,
-                            ),
+                            Builder(builder: (context) {
+                              // "No items match" only makes sense when a
+                              // search or filter is hiding items that exist.
+                              final filtering = _search.isNotEmpty ||
+                                  _filter != 'All';
+                              final fridgeEmpty =
+                                  (inv?.items.isEmpty ?? true) || !filtering;
+                              return Column(
+                                children: [
+                                  Text(
+                                    fridgeEmpty
+                                        ? 'Fridge is empty'
+                                        : 'No items match',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    fridgeEmpty
+                                        ? 'Close the door to trigger an auto-scan'
+                                        : 'Try a different search or filter',
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium,
+                                  ),
+                                ],
+                              );
+                            }),
                           ],
                         ),
                       ),
@@ -277,10 +277,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         crossAxisCount: 2,
                         mainAxisSpacing: 16,
                         crossAxisSpacing: 16,
-                        childAspectRatio: 0.75,
+                        childAspectRatio: 0.70,
                       ),
                       delegate: SliverChildBuilderDelegate(
-                        (_, i) => _InventoryCard(item: items[i]),
+                        (_, i) => _InventoryCard(
+                          item: items[i],
+                          onTap: () => _showItemSheet(context, items[i]),
+                        ),
                         childCount: items.length,
                       ),
                     ),
@@ -292,49 +295,288 @@ class _InventoryScreenState extends State<InventoryScreen> {
       ),
     );
   }
+
+  void _showItemSheet(BuildContext context, FridgeItem item) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surfaceContainerLowest,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _ItemActionsSheet(item: item),
+    );
+  }
+}
+
+// ── Item actions bottom sheet: adjust quantity / remove ───────────────────────
+class _ItemActionsSheet extends StatefulWidget {
+  final FridgeItem item;
+
+  const _ItemActionsSheet({required this.item});
+
+  @override
+  State<_ItemActionsSheet> createState() => _ItemActionsSheetState();
+}
+
+class _ItemActionsSheetState extends State<_ItemActionsSheet> {
+  late int _qty;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _qty = int.tryParse(widget.item.quantity) ?? 1;
+    if (_qty < 1) _qty = 1;
+  }
+
+  Future<void> _save() async {
+    setState(() => _busy = true);
+    await FridgeService.setInventoryQuantity(widget.item.name, _qty);
+    if (mounted) Navigator.pop(context);
+  }
+
+  Future<void> _pickExpiry() async {
+    final now = DateTime.now();
+    final initial = widget.item.nextExpiry ?? now.add(const Duration(days: 7));
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial.isBefore(now) ? now : initial,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 3),
+    );
+    if (picked == null) return;
+    final iso = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-'
+        '${picked.day.toString().padLeft(2, '0')}';
+    setState(() => _busy = true);
+    await FridgeService.setItemExpiry(widget.item.name, iso);
+    if (!mounted) return;
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Expiry for ${widget.item.displayName} set to $iso'),
+        backgroundColor: AppColors.secondary,
+      ),
+    );
+  }
+
+  Future<void> _remove() async {
+    setState(() => _busy = true);
+    await FridgeService.removeInventoryItem(widget.item.name);
+    if (!mounted) return;
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${widget.item.displayName} removed from fridge'),
+        backgroundColor: AppColors.onSurface,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final changed = _qty != (int.tryParse(widget.item.quantity) ?? _qty);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.outlineVariant,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Header
+            Row(
+              children: [
+                ItemIcon(itemName: widget.item.name, size: 48),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(widget.item.displayName,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w700)),
+                      Text(widget.item.expiryLabel,
+                          style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+
+            // Quantity stepper
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Quantity',
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w600)),
+                Row(
+                  children: [
+                    _QtyButton(
+                      icon: Icons.remove_rounded,
+                      onTap: _qty > 1 && !_busy
+                          ? () => setState(() => _qty--)
+                          : null,
+                    ),
+                    Padding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 18),
+                      child: Text('$_qty',
+                          style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800)),
+                    ),
+                    _QtyButton(
+                      icon: Icons.add_rounded,
+                      onTap: !_busy ? () => setState(() => _qty++) : null,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Expiry date
+            InkWell(
+              onTap: _busy ? null : _pickExpiry,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.event_rounded,
+                        size: 20, color: AppColors.primary),
+                    const SizedBox(width: 12),
+                    const Text('Expiry date',
+                        style: TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w600)),
+                    const Spacer(),
+                    Text(
+                      widget.item.nextExpiry != null
+                          ? widget.item.expiryLabel
+                          : 'Set date',
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.chevron_right_rounded,
+                        size: 20, color: AppColors.onSurfaceVariant),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Save quantity (only when changed)
+            if (changed)
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _busy ? null : _save,
+                  style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12))),
+                  child: Text('Update quantity to $_qty'),
+                ),
+              ),
+            if (changed) const SizedBox(height: 10),
+
+            // Remove
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _busy ? null : _remove,
+                icon: const Icon(Icons.delete_outline_rounded,
+                    color: AppColors.error),
+                label: const Text('Remove from fridge',
+                    style: TextStyle(color: AppColors.error)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: AppColors.error),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QtyButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  const _QtyButton({required this.icon, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: enabled
+              ? AppColors.primaryFixed
+              : AppColors.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon,
+            size: 20,
+            color: enabled ? AppColors.primary : AppColors.outline),
+      ),
+    );
+  }
 }
 
 class _InventoryCard extends StatelessWidget {
   final FridgeItem item;
+  final VoidCallback onTap;
 
-  const _InventoryCard({required this.item});
+  const _InventoryCard({required this.item, required this.onTap});
 
   Color get _borderColor {
-    switch (item.confidence) {
-      case 'high':
-        return AppColors.secondary;
-      case 'medium':
-        return AppColors.tertiaryFixedDim;
-      default:
+    switch (item.expiryStatus) {
+      case ExpiryStatus.expired:
+      case ExpiryStatus.critical:
         return AppColors.error;
-    }
-  }
-
-  String get _statusLabel {
-    switch (item.confidence) {
-      case 'high':
-        return 'Fresh';
-      case 'medium':
-        return 'Expiring Soon';
-      default:
-        return 'Check';
-    }
-  }
-
-  Color get _statusColor {
-    switch (item.confidence) {
-      case 'high':
-        return AppColors.secondary;
-      case 'medium':
+      case ExpiryStatus.soon:
         return AppColors.tertiaryFixedDim;
-      default:
-        return AppColors.error;
+      case ExpiryStatus.ok:
+        return AppColors.secondary;
+      case ExpiryStatus.unknown:
+        return AppColors.outline;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       decoration: BoxDecoration(
         color: AppColors.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(20),
@@ -351,7 +593,7 @@ class _InventoryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Image — tries Firebase Storage, then generates with Gemini AI
+            // Image
             Expanded(
               child: LayoutBuilder(
                 builder: (_, constraints) => ItemIcon(
@@ -361,7 +603,7 @@ class _InventoryCard extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
 
             // Name
             Text(
@@ -372,31 +614,39 @@ class _InventoryCard extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
 
-            // Quantity + Status
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Qty: ${item.quantity}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+            // Quantity
+            Text(
+              'Qty: ${item.quantity}',
+              style: Theme.of(context).textTheme.bodyMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 5),
+
+            // Expiry badge
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                color: _borderColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                item.expiryLabel,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: _borderColor,
                 ),
-                Text(
-                  _statusLabel,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: _statusColor,
-                  ),
-                ),
-              ],
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ],
         ),
+      ),
       ),
     );
   }

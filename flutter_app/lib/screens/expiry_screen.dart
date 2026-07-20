@@ -4,8 +4,16 @@ import '../services/fridge_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/item_icon.dart';
 
-class ExpiryScreen extends StatelessWidget {
+class ExpiryScreen extends StatefulWidget {
   const ExpiryScreen({super.key});
+
+  @override
+  State<ExpiryScreen> createState() => _ExpiryScreenState();
+}
+
+class _ExpiryScreenState extends State<ExpiryScreen> {
+  late final Stream<InventorySnapshot?> _invStream =
+      FridgeService.inventoryStream();
 
   @override
   Widget build(BuildContext context) {
@@ -24,16 +32,9 @@ class ExpiryScreen extends StatelessWidget {
                 color: AppColors.onSurface,
                 fontSize: 20,
                 fontWeight: FontWeight.w700)),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_outlined,
-                color: AppColors.primary),
-            onPressed: () {},
-          ),
-        ],
       ),
       body: StreamBuilder<InventorySnapshot?>(
-        stream: FridgeService.inventoryStream(),
+        stream: _invStream,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
             return const Center(
@@ -44,72 +45,76 @@ class ExpiryScreen extends StatelessWidget {
             return _emptyState(context);
           }
 
-          final expired =
-              inv.items.where((i) => i.confidence == 'low').toList();
-          final soon =
-              inv.items.where((i) => i.confidence == 'medium').toList();
-          final fresh =
-              inv.items.where((i) => i.confidence == 'high').toList();
+          final expired = inv.items
+              .where((i) => i.expiryStatus == ExpiryStatus.expired)
+              .toList();
+          final critical = inv.items
+              .where((i) => i.expiryStatus == ExpiryStatus.critical)
+              .toList();
+          final soon = inv.items
+              .where((i) => i.expiryStatus == ExpiryStatus.soon)
+              .toList();
+          final ok = inv.items
+              .where((i) => i.expiryStatus == ExpiryStatus.ok)
+              .toList();
+          final unknown = inv.items
+              .where((i) => i.expiryStatus == ExpiryStatus.unknown)
+              .toList();
+
+          final hasAnything = expired.isNotEmpty ||
+              critical.isNotEmpty ||
+              soon.isNotEmpty ||
+              ok.isNotEmpty;
+
+          if (!hasAnything && unknown.length == inv.items.length) {
+            return _noDateState(context, unknown.length);
+          }
 
           return CustomScrollView(
             slivers: [
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryFixed,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.info_outline_rounded,
-                            size: 16, color: AppColors.primary),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Freshness is estimated from AI scan confidence. '
-                            'Red = Low confidence (check item), '
-                            'Amber = Medium, Green = Fresh.',
-                            style: TextStyle(
-                                fontSize: 11, color: AppColors.primary),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // Check Now (low confidence) — shown as "expired"
+              // Expired
               if (expired.isNotEmpty) ...[
                 _sectionHeader(
                     context,
-                    'Check Now',
+                    'Expired',
                     '${expired.length} items',
                     AppColors.error,
-                    Icons.warning_rounded),
+                    Icons.cancel_rounded),
                 SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate(
-                      (_, i) => _ExpiryCard(
-                        item: expired[i],
-                        status: _ItemStatus.check,
-                        daysLabel: 'Check immediately',
-                      ),
+                      (_, i) => _ExpiryCard(item: expired[i]),
                       childCount: expired.length,
                     ),
                   ),
                 ),
               ],
 
-              // Expiring Soon (medium confidence)
+              // Critical (1–3 days)
+              if (critical.isNotEmpty) ...[
+                _sectionHeader(
+                    context,
+                    'Expiring in 1–3 days',
+                    '${critical.length} items',
+                    AppColors.error,
+                    Icons.warning_rounded),
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) => _ExpiryCard(item: critical[i]),
+                      childCount: critical.length,
+                    ),
+                  ),
+                ),
+              ],
+
+              // Soon (4–7 days)
               if (soon.isNotEmpty) ...[
                 _sectionHeader(
                     context,
-                    'Expiring Soon',
+                    'Expiring this week',
                     '${soon.length} items',
                     AppColors.tertiaryFixedDim,
                     Icons.schedule_rounded),
@@ -117,23 +122,19 @@ class ExpiryScreen extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate(
-                      (_, i) => _ExpiryCard(
-                        item: soon[i],
-                        status: _ItemStatus.soon,
-                        daysLabel: '2–5 days left',
-                      ),
+                      (_, i) => _ExpiryCard(item: soon[i]),
                       childCount: soon.length,
                     ),
                   ),
                 ),
               ],
 
-              // Fresh (high confidence) — horizontal scroll
-              if (fresh.isNotEmpty) ...[
+              // Fresh (ok)
+              if (ok.isNotEmpty) ...[
                 _sectionHeader(
                     context,
-                    'Coming Up Soon',
-                    '${fresh.length} items',
+                    'Fresh',
+                    '${ok.length} items',
                     AppColors.secondary,
                     Icons.check_circle_rounded),
                 SliverToBoxAdapter(
@@ -143,8 +144,27 @@ class ExpiryScreen extends StatelessWidget {
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       separatorBuilder: (_, __) => const SizedBox(width: 12),
-                      itemCount: fresh.length,
-                      itemBuilder: (_, i) => _FreshCard(item: fresh[i]),
+                      itemCount: ok.length,
+                      itemBuilder: (_, i) => _FreshCard(item: ok[i]),
+                    ),
+                  ),
+                ),
+              ],
+
+              // Unknown (no date set)
+              if (unknown.isNotEmpty) ...[
+                _sectionHeader(
+                    context,
+                    'No date set',
+                    '${unknown.length} items',
+                    AppColors.outline,
+                    Icons.help_outline_rounded),
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) => _ExpiryCard(item: unknown[i]),
+                      childCount: unknown.length,
                     ),
                   ),
                 ),
@@ -174,12 +194,35 @@ class ExpiryScreen extends StatelessWidget {
                 size: 40, color: AppColors.onSecondaryContainer),
           ),
           const SizedBox(height: 16),
-          Text('All fresh!',
-              style: Theme.of(context).textTheme.titleLarge),
+          Text('All fresh!', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
-          const Text('No expiry concerns detected.',
+          const Text('No items in fridge.',
               style: TextStyle(color: AppColors.onSurfaceVariant)),
         ],
+      ),
+    );
+  }
+
+  Widget _noDateState(BuildContext context, int count) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.calendar_today_rounded,
+                size: 64, color: AppColors.outline),
+            const SizedBox(height: 16),
+            Text('No expiry dates set',
+                style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(
+              'Set expiry dates on the TFT display (touch UI) for $count items to see alerts here.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.onSurfaceVariant),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -194,7 +237,7 @@ class ExpiryScreen extends StatelessWidget {
             Icon(icon, size: 18, color: color),
             const SizedBox(width: 8),
             Text(label,
-                style: TextStyle(
+                style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
                     color: AppColors.onSurface)),
@@ -219,48 +262,50 @@ class ExpiryScreen extends StatelessWidget {
   }
 }
 
-enum _ItemStatus { check, soon, fresh }
-
 class _ExpiryCard extends StatelessWidget {
   final FridgeItem item;
-  final _ItemStatus status;
-  final String daysLabel;
 
-  const _ExpiryCard(
-      {required this.item,
-      required this.status,
-      required this.daysLabel});
+  const _ExpiryCard({required this.item});
 
   Color get _borderColor {
-    switch (status) {
-      case _ItemStatus.check:
+    switch (item.expiryStatus) {
+      case ExpiryStatus.expired:
+      case ExpiryStatus.critical:
         return AppColors.error;
-      case _ItemStatus.soon:
+      case ExpiryStatus.soon:
         return AppColors.tertiaryFixedDim;
-      case _ItemStatus.fresh:
+      case ExpiryStatus.ok:
         return AppColors.secondary;
+      case ExpiryStatus.unknown:
+        return AppColors.outline;
     }
   }
 
   Color get _badgeColor {
-    switch (status) {
-      case _ItemStatus.check:
+    switch (item.expiryStatus) {
+      case ExpiryStatus.expired:
+      case ExpiryStatus.critical:
         return AppColors.errorContainer;
-      case _ItemStatus.soon:
+      case ExpiryStatus.soon:
         return AppColors.tertiaryFixed;
-      case _ItemStatus.fresh:
+      case ExpiryStatus.ok:
         return AppColors.secondaryContainer;
+      case ExpiryStatus.unknown:
+        return AppColors.surfaceContainerHigh;
     }
   }
 
   Color get _badgeTextColor {
-    switch (status) {
-      case _ItemStatus.check:
+    switch (item.expiryStatus) {
+      case ExpiryStatus.expired:
+      case ExpiryStatus.critical:
         return AppColors.error;
-      case _ItemStatus.soon:
-        return Color(0xFF5B4300);
-      case _ItemStatus.fresh:
+      case ExpiryStatus.soon:
+        return const Color(0xFF5B4300);
+      case ExpiryStatus.ok:
         return AppColors.secondary;
+      case ExpiryStatus.unknown:
+        return AppColors.onSurfaceVariant;
     }
   }
 
@@ -274,20 +319,15 @@ class _ExpiryCard extends StatelessWidget {
         border: Border(left: BorderSide(color: _borderColor, width: 4)),
         boxShadow: const [
           BoxShadow(
-              color: Color(0x08000000),
-              blurRadius: 6,
-              offset: Offset(0, 2)),
+              color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
         ],
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Row(
           children: [
-            // Icon
             ItemIcon(itemName: item.name, size: 52),
             const SizedBox(width: 14),
-
-            // Name + qty + days
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -307,7 +347,7 @@ class _ExpiryCard extends StatelessWidget {
                       color: _badgeColor,
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    child: Text(daysLabel,
+                    child: Text(item.expiryLabel,
                         style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
@@ -316,14 +356,16 @@ class _ExpiryCard extends StatelessWidget {
                 ],
               ),
             ),
-
-            // Add to shopping list button
             IconButton(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text('${item.displayName} added to shopping list'),
-                  backgroundColor: AppColors.primary,
-                ));
+              onPressed: () async {
+                await FridgeService.addShoppingItem(item.name);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(
+                        '${item.displayName} added to shopping list'),
+                    backgroundColor: AppColors.primary,
+                  ));
+                }
               },
               icon: const Icon(Icons.add_shopping_cart_rounded,
                   color: AppColors.primary),
@@ -348,13 +390,11 @@ class _FreshCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-            color: AppColors.secondary.withValues(alpha: 0.3)),
+        border:
+            Border.all(color: AppColors.secondary.withValues(alpha: 0.3)),
         boxShadow: const [
           BoxShadow(
-              color: Color(0x08000000),
-              blurRadius: 6,
-              offset: Offset(0, 2)),
+              color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
         ],
       ),
       child: Padding(
@@ -371,13 +411,14 @@ class _FreshCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis),
             const SizedBox(height: 4),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 color: AppColors.secondaryContainer,
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Text('7–14 days',
-                  style: TextStyle(
+              child: Text(item.expiryLabel,
+                  style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
                       color: AppColors.secondary)),
