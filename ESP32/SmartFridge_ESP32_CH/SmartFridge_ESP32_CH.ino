@@ -508,7 +508,10 @@ void loop() {
   if (doorOpenTooLong()) {
     Serial.println("[DOOR] Open too long — buzzing!");
     buzzFor(g_buzzer_duration_ms);
-    if (g_door_alert_on) addNotification("Door left open");
+    // Buzzer re-fires every cycle (above) to keep nagging, but log the alert
+    // only once per open episode so the alerts list isn't spammed with repeats
+    // while the door stays open (doorAlertFirstThisEpisode() resets on re-open).
+    if (g_door_alert_on && doorAlertFirstThisEpisode()) addNotification("Door left open");
   }
 
   updateBuzzer();
