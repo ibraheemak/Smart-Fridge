@@ -5,7 +5,6 @@ import 'firebase_options.dart';
 import 'services/auth_service.dart';
 import 'services/fridge_session.dart';
 import 'services/notification_service.dart';
-import 'services/settings_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_scaffold.dart';
@@ -17,7 +16,6 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  await SettingsService.init();
   await NotificationService.init();
   runApp(const SmartFridgeApp());
 }

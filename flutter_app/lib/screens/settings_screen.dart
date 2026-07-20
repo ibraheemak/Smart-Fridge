@@ -3,38 +3,21 @@ import '../services/auth_service.dart';
 import '../services/fridge_service.dart';
 import '../services/icon_generator_service.dart';
 import '../services/fridge_session.dart';
-import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import 'analytics_screen.dart';
+import 'fridge_settings_screen.dart';
 import 'temperature_screen.dart';
 import 'users_screen.dart';
 import 'camera_screen.dart';
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
-
-  @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  late double _minTemp;
-  late double _maxTemp;
-  late int _expiryDays;
-
-  @override
-  void initState() {
-    super.initState();
-    _minTemp = SettingsService.getMinTemp();
-    _maxTemp = SettingsService.getMaxTemp();
-    _expiryDays = SettingsService.getExpiryWarningDays();
-  }
 
   @override
   Widget build(BuildContext context) {
     final user = AuthService.currentUser;
     final name = AuthService.displayName;
-    // Alert thresholds and icon regeneration are Homeowner-only.
+    // Fridge/alert settings and icon regeneration are manager-only.
     final isAdmin = FridgeSession.isAdmin;
 
     return Scaffold(
@@ -62,140 +45,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                   const SizedBox(height: 20),
 
-                  // Alert preferences — Homeowner-only; drive the alert logic
-                  _SettingsSection(
-                    title: 'Alert Preferences',
-                    icon: Icons.notifications_active_rounded,
-                    iconColor: AppColors.primary,
-                    children: [
-                      if (!isAdmin)
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(16, 10, 16, 0),
-                          child: Row(
-                            children: [
-                              Icon(Icons.lock_outline_rounded,
-                                  size: 14,
-                                  color: AppColors.onSurfaceVariant),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                    'Only the manager can change these.',
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        color: AppColors.onSurfaceVariant)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                        child: Row(
-                          children: [
-                            const Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('Safe Temperature Range',
-                                      style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600)),
-                                  Text(
-                                      'Outside this range the app shows a temperature alert',
-                                      style: TextStyle(
-                                          fontSize: 11,
-                                          color: AppColors.onSurfaceVariant)),
-                                ],
-                              ),
-                            ),
-                            Text(
-                                '${_minTemp.round()}°C – ${_maxTemp.round()}°C',
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.primary)),
+                  // Fridge & alert settings — the shared set that also lives
+                  // on the fridge screen (RTDB). Manager-only.
+                  if (isAdmin)
+                    GestureDetector(
+                      onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const FridgeSettingsScreen())),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceContainerLowest,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: const [
+                            BoxShadow(
+                                color: Color(0x0A000000),
+                                blurRadius: 8,
+                                offset: Offset(0, 2)),
                           ],
                         ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: RangeSlider(
-                          values: RangeValues(_minTemp, _maxTemp),
-                          min: 0,
-                          max: 10,
-                          divisions: 10,
-                          activeColor: AppColors.primary,
-                          inactiveColor: AppColors.outlineVariant,
-                          onChanged: isAdmin
-                              ? (r) {
-                                  setState(() {
-                                    _minTemp = r.start;
-                                    _maxTemp = r.end;
-                                  });
-                                  SettingsService.setMinTemp(r.start);
-                                  SettingsService.setMaxTemp(r.end);
-                                }
-                              : null,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                         child: Row(
                           children: [
+                            Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withValues(alpha: 0.12),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.tune_rounded,
+                                  color: AppColors.primary, size: 20),
+                            ),
+                            const SizedBox(width: 14),
                             const Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('Expiry Advance Warning',
+                                  Text('Fridge & Alert Settings',
                                       style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600)),
-                                  Text(
-                                      'Items expiring within this many days are marked critical',
-                                      style: TextStyle(
-                                          fontSize: 11,
-                                          color: AppColors.onSurfaceVariant)),
-                                ],
-                              ),
-                            ),
-                            Row(
-                              children: [
-                                _StepButton(
-                                  icon: Icons.remove,
-                                  onTap: isAdmin && _expiryDays > 1
-                                      ? () {
-                                          setState(() => _expiryDays--);
-                                          SettingsService
-                                              .setExpiryWarningDays(_expiryDays);
-                                        }
-                                      : null,
-                                ),
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 12),
-                                  child: Text('$_expiryDays days',
-                                      style: const TextStyle(
                                           fontSize: 15,
-                                          fontWeight: FontWeight.w700)),
-                                ),
-                                _StepButton(
-                                  icon: Icons.add,
-                                  onTap: isAdmin && _expiryDays < 7
-                                      ? () {
-                                          setState(() => _expiryDays++);
-                                          SettingsService
-                                              .setExpiryWarningDays(_expiryDays);
-                                        }
-                                      : null,
-                                ),
-                              ],
+                                          fontWeight: FontWeight.w700,
+                                          color: AppColors.onSurface)),
+                                  Text(
+                                      'Temperature range, alerts, buzzer — synced with the fridge screen',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.onSurfaceVariant)),
+                                ],
+                              ),
                             ),
+                            const Icon(Icons.chevron_right_rounded,
+                                color: AppColors.onSurfaceVariant),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 16),
+                    ),
+                  if (isAdmin) const SizedBox(height: 16),
 
                   // Account
                   _SettingsSection(
@@ -440,34 +346,6 @@ class _SettingsSection extends StatelessWidget {
   }
 }
 
-class _StepButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  const _StepButton({required this.icon, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          color: onTap != null
-              ? AppColors.primaryFixed
-              : AppColors.surfaceContainerHighest,
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon,
-            size: 16,
-            color: onTap != null
-                ? AppColors.primary
-                : AppColors.outline),
-      ),
-    );
-  }
-}
 
 class _RegenerateIconsButton extends StatefulWidget {
   const _RegenerateIconsButton();

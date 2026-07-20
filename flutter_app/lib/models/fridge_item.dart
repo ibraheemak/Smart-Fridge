@@ -1,5 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../services/settings_service.dart';
+import '../services/fridge_settings_service.dart';
 
 // Parses either a Firestore Timestamp or an ESP32 string ("YYYY-MM-DD HH:MM:SS").
 DateTime _parseTimestamp(dynamic v) {
@@ -84,7 +84,7 @@ class FridgeItem {
     final days = _daysToExpiry;
     if (days == null) return ExpiryStatus.unknown;
     if (days < 0) return ExpiryStatus.expired;
-    if (days <= SettingsService.getExpiryWarningDays()) {
+    if (days <= FridgeSettingsService.cached.expiryWarnDays) {
       return ExpiryStatus.critical;
     }
     if (days <= 7) return ExpiryStatus.soon;
@@ -143,8 +143,8 @@ class TemperatureReading {
   // Safe range comes from Settings (defaults 2–8°C).
   bool get isAlert =>
       temperatureC != null &&
-      (temperatureC! < SettingsService.getMinTemp() ||
-          temperatureC! > SettingsService.getMaxTemp());
+      (temperatureC! < FridgeSettingsService.cached.tempMin ||
+          temperatureC! > FridgeSettingsService.cached.tempMax);
   bool get isOk => temperatureC != null && !isAlert;
 
   String get updatedAtLabel => relativeTimeLabel(updatedAt);
