@@ -147,6 +147,12 @@ void enqueuePendingExpiry(int item_idx, int expiry_idx) {
 // Declared here; defined below after drawNewItemScreen.
 void processNextPending();
 
+// Defined in notifications.h (included after this file). Re-scans the live
+// inventory for expired / about-to-expire units and logs alerts. Called right
+// after an expiry date is saved so a today/past date alerts immediately instead
+// of waiting for the next inventory poll or the periodic sweep.
+void scanExpiries();
+
 // Returns the expiry_index currently being edited for VIEW_NEW_ITEM / VIEW_DETAIL.
 int currentExpiryIndex() {
   return g_pending[MAX_PENDING - 1].expiry_index;
@@ -597,6 +603,12 @@ void saveExpiry() {
 
   drawFooter("Saving expiry date...");
   persistItemsToFirestore();
+
+  // Immediately re-check expiries so a date entered as today / already-past
+  // raises its alert right now, instead of only on the next inventory poll
+  // (.ino) or the 5-minute periodic sweep. Deduped by text, so harmless if the
+  // later poll re-scans the same unit.
+  scanExpiries();
 
   // If we came from the pending queue, process the next item.
   if (g_pending_count > 0) {
