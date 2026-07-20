@@ -24,6 +24,7 @@ static int           doorReading   = HIGH;   // last raw reading
 static unsigned long doorChangeMs  = 0;      // when the raw reading last changed
 static unsigned long doorOpenSince = 0;      // millis() when door last opened (0 = closed)
 static bool          doorOpenPending = false; // set when CLOSED→OPEN edge occurs
+static bool          doorAlertLogged = false; // notification already logged this open episode
 
 void initDoorSensor() {
   pinMode(HALL_PIN, INPUT_PULLUP);
@@ -49,6 +50,17 @@ bool doorOpenTooLong() {
   return false;
 }
 
+// True only the FIRST time it's called within one door-open episode; false on
+// every later call until the door closes and re-opens. The buzzer re-fires every
+// cycle via doorOpenTooLong(), but the on-screen "Door left open" notification
+// should be logged just once per episode — gate addNotification() on this so the
+// alerts list doesn't fill up with duplicates while the door stays open.
+bool doorAlertFirstThisEpisode() {
+  if (doorAlertLogged) return false;
+  doorAlertLogged = true;
+  return true;
+}
+
 // Debounced edge detector. Returns true exactly once per OPEN -> CLOSED
 // transition. Non-blocking; call every loop().
 bool doorJustClosed() {
@@ -66,7 +78,8 @@ bool doorJustClosed() {
       doorOpenSince = 0;               // door closed — stop open timer
       if (prev != DOOR_CLOSED_LEVEL) return true;
     } else {
-      doorOpenSince = millis();        // door opened — start open timer
+      doorOpenSince   = millis();      // door opened — start open timer
+      doorAlertLogged = false;         // new open episode — allow one notification
     }
     if (prev == DOOR_CLOSED_LEVEL && doorState != DOOR_CLOSED_LEVEL)
       doorOpenPending = true;          // CLOSED → OPEN
