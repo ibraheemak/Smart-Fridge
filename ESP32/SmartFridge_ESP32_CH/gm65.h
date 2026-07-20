@@ -255,21 +255,44 @@ String lookupProductName(const String& barcode) {
 
   String url = "https://world.openfoodfacts.org/api/v2/product/" + barcode +
                ".json?fields=product_name,product_name_en,status";
-  Serial.printf("[GM65][OFF] GET %s\n", url.c_str());
 
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  http.setTimeout(10000);
-  if (!http.begin(client, url)) {
-    Serial.println("[GM65][OFF] http.begin failed");
-    return "";
+  // A TLS handshake to this host sometimes fails outright (connect() returns
+  // 0 before any HTTP response, surfacing as code -1 with an empty body).
+  // This board keeps two persistent secure streams open at all times
+  // (rtdb_stream.h, settings_sync.h), each pinning a large mbedtls session
+  // buffer for its whole lifetime — free heap can look fine in aggregate
+  // (~60KB) while the largest *contiguous* block is too small for a third
+  // handshake's buffers. getFreeHeap() can't tell that apart from real
+  // exhaustion; getMaxAllocHeap() (the largest single allocatable block) can,
+  // so log both. Backoff is longer than the first retry's 500ms — clearing
+  // fragmentation means waiting for one of the other short-lived allocations
+  // on this board to free, not just re-trying immediately.
+  const int kMaxAttempts = 3;
+  const int kBackoffMs[kMaxAttempts - 1] = {500, 2000};
+  int code = -1;
+  String body;
+  for (int attempt = 1; attempt <= kMaxAttempts; attempt++) {
+    Serial.printf("[GM65][OFF] GET %s (attempt %d/%d, free heap %u, max alloc %u)\n",
+                  url.c_str(), attempt, kMaxAttempts,
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    http.setTimeout(10000);
+    if (!http.begin(client, url)) {
+      Serial.println("[GM65][OFF] http.begin failed");
+      code = -1;
+    } else {
+      code = http.GET();
+      body = http.getString();
+      http.end();
+    }
+    Serial.printf("[GM65][OFF] HTTP %d, body: %s\n", code, body.c_str());
+
+    if (code == 200) break;
+    if (attempt < kMaxAttempts) delay(kBackoffMs[attempt - 1]);
   }
-
-  int code = http.GET();
-  String body = http.getString();
-  http.end();
-  Serial.printf("[GM65][OFF] HTTP %d, body: %s\n", code, body.c_str());
 
   if (code != 200) return "";
 

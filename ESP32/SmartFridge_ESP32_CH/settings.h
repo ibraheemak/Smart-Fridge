@@ -4,13 +4,14 @@
 // Settings screen + environment (temperature/humidity) alert.
 //
 // A "Settings" button lives top-left on the home header (see display.h's
-// drawHomeSettingsButton()). Tapping it opens VIEW_SETTINGS, where the user
-// can:
-//   - turn the door-open buzzer sound on/off        -> g_buzzer_enabled
-//   - change how long the door may stay open before  -> g_door_open_alert_ms
-//     the buzzer starts (seconds)
-//   - set the acceptable temperature range (min/max, C)
-//   - set the acceptable humidity range (min/max, %)
+// drawHomeSettingsButton()). Tapping it opens VIEW_SETTINGS, a 7-row menu:
+//   row 0  Buzzer      [Options >]  -> buzzer sub-screen (volume/pitch/...)
+//   row 1  Alerts      [Options >]  -> alert-settings sub-screen (VIEW_NOTIF_
+//                                      SETTINGS: expiry/new-item/retention)
+//   row 2  Door alert  [- + ]       -> g_door_open_alert_ms (seconds the door
+//                                      may stay open before the buzzer starts)
+//   rows 3-4  Temp min/max (C)      -> acceptable temperature range
+//   rows 5-6  Humidity min/max (%)  -> acceptable humidity range
 //
 // If a temperature/humidity reading (pushed from the roof1 CAM over ESP-NOW,
 // see espnow_link.h) falls outside the configured range, a full-screen ALERT
@@ -33,10 +34,18 @@
 // Defined in notifications.h (included after this file). Logs an alert into the
 // persistent notifications list shown on the home "ALERTS" tile / list screen.
 void addNotification(const String& text);
+// Master toggle for the temperature/humidity out-of-range alert, set from the
+// alert-settings sub-screen. Defined in notifications.h; declared here so
+// checkEnvironmentAlert() below can honor it.
+extern bool g_env_alert_on;
 // Opens the alert-settings sub-screen (VIEW_NOTIF_SETTINGS) — retention window
-// + expiry-alert config. Reached from this Settings screen's header "Alerts"
-// button; g_notif_settings_prev (touch.h) tells it to return here on Back.
+// + expiry-alert config. Reached from this Settings screen's "Alerts" row
+// "Options >" button; g_notif_settings_prev (touch.h) tells it to return here on Back.
 void openNotifSettingsScreen();
+// Mirror the current settings up to Realtime Database so the Flutter app sees
+// them. Defined in settings_sync.h (included after this file); declared here so
+// the Settings/Buzzer Back handlers can push right after they persist to NVS.
+void pushSettingsToRTDB();
 
 // ----------------------------------------------------------------------------
 // Persisted settings
@@ -161,6 +170,7 @@ void renderAlertScreen() {
 // while the alert is already up — it stays until the user taps CLOSE.
 void checkEnvironmentAlert() {
   if (g_view == VIEW_ALERT) return;
+  if (!g_env_alert_on) { g_alert_active = false; g_alert_dismissed = false; return; }
 
   String msg;
   bool oor = readingOutOfRange(msg);
@@ -186,6 +196,7 @@ void checkEnvironmentAlert() {
 // Called every loop() — shows a pending alert the moment the user is back on an
 // idle screen (it was deferred while they were mid-task).
 void serviceEnvironmentAlert() {
+  if (!g_env_alert_on) return;
   if (g_alert_active && g_view != VIEW_ALERT &&
       (g_view == VIEW_HOME || g_view == VIEW_LIST || g_view == VIEW_STATS)) {
     g_view = VIEW_ALERT;
@@ -205,9 +216,9 @@ void handleAlertTouch(int x, int y) {
 // ----------------------------------------------------------------------------
 // Settings screen layout
 // ----------------------------------------------------------------------------
-#define SET_ROW_H  44
+#define SET_ROW_H  39
 #define SET_BTN_W  42
-#define SET_BTN_H  38
+#define SET_BTN_H  36
 #define SET_MINUS_X 250
 #define SET_PLUS_X  358
 #define SET_VAL_X0  292
@@ -216,7 +227,7 @@ void handleAlertTouch(int x, int y) {
 static inline int setRowY(int i) { return HEADER_HEIGHT_PX + 6 + i * SET_ROW_H; }
 
 BtnRect btnSetBuzzer;
-BtnRect btnSetNotif;              // header button → alert-settings sub-screen
+BtnRect btnSetAlerts;            // row 1 "Options >" → alert-settings sub-screen
 BtnRect btnDoorM, btnDoorP;
 BtnRect btnTMinM, btnTMinP, btnTMaxM, btnTMaxP;
 BtnRect btnHMinM, btnHMinP, btnHMaxM, btnHMaxP;
@@ -224,19 +235,22 @@ BtnRect btnHMinM, btnHMinP, btnHMaxM, btnHMaxP;
 void layoutSettings() {
   int y0 = setRowY(0) + 2, y1 = setRowY(1) + 2, y2 = setRowY(2) + 2;
   int y3 = setRowY(3) + 2, y4 = setRowY(4) + 2, y5 = setRowY(5) + 2;
+  int y6 = setRowY(6) + 2;
 
+  // Rows 0-1 are "category" rows that open a sub-screen; rows 2-6 are +/- values.
   btnSetBuzzer = {SET_MINUS_X, y0, 150, SET_BTN_H};
+  btnSetAlerts = {SET_MINUS_X, y1, 150, SET_BTN_H};
 
-  btnDoorM = {SET_MINUS_X, y1, SET_BTN_W, SET_BTN_H};
-  btnDoorP = {SET_PLUS_X,  y1, SET_BTN_W, SET_BTN_H};
-  btnTMinM = {SET_MINUS_X, y2, SET_BTN_W, SET_BTN_H};
-  btnTMinP = {SET_PLUS_X,  y2, SET_BTN_W, SET_BTN_H};
-  btnTMaxM = {SET_MINUS_X, y3, SET_BTN_W, SET_BTN_H};
-  btnTMaxP = {SET_PLUS_X,  y3, SET_BTN_W, SET_BTN_H};
-  btnHMinM = {SET_MINUS_X, y4, SET_BTN_W, SET_BTN_H};
-  btnHMinP = {SET_PLUS_X,  y4, SET_BTN_W, SET_BTN_H};
-  btnHMaxM = {SET_MINUS_X, y5, SET_BTN_W, SET_BTN_H};
-  btnHMaxP = {SET_PLUS_X,  y5, SET_BTN_W, SET_BTN_H};
+  btnDoorM = {SET_MINUS_X, y2, SET_BTN_W, SET_BTN_H};
+  btnDoorP = {SET_PLUS_X,  y2, SET_BTN_W, SET_BTN_H};
+  btnTMinM = {SET_MINUS_X, y3, SET_BTN_W, SET_BTN_H};
+  btnTMinP = {SET_PLUS_X,  y3, SET_BTN_W, SET_BTN_H};
+  btnTMaxM = {SET_MINUS_X, y4, SET_BTN_W, SET_BTN_H};
+  btnTMaxP = {SET_PLUS_X,  y4, SET_BTN_W, SET_BTN_H};
+  btnHMinM = {SET_MINUS_X, y5, SET_BTN_W, SET_BTN_H};
+  btnHMinP = {SET_PLUS_X,  y5, SET_BTN_W, SET_BTN_H};
+  btnHMaxM = {SET_MINUS_X, y6, SET_BTN_W, SET_BTN_H};
+  btnHMaxP = {SET_PLUS_X,  y6, SET_BTN_W, SET_BTN_H};
 }
 
 void drawSetValue(int row, const String& s) {
@@ -249,13 +263,13 @@ void drawSetValue(int row, const String& s) {
 }
 
 // Redraws only the mutable value fields — used after a +/- tap so the labels
-// and fixed buttons don't flash. (Row 0's "Options" button is static.)
+// and fixed buttons don't flash. (Rows 0-1's "Options" buttons are static.)
 void drawSettingsValues() {
-  drawSetValue(1, String(g_settings.door_alert_s) + "s");
-  drawSetValue(2, String(g_settings.temp_min) + "C");
-  drawSetValue(3, String(g_settings.temp_max) + "C");
-  drawSetValue(4, String(g_settings.hum_min) + "%");
-  drawSetValue(5, String(g_settings.hum_max) + "%");
+  drawSetValue(2, String(g_settings.door_alert_s) + "s");
+  drawSetValue(3, String(g_settings.temp_min) + "C");
+  drawSetValue(4, String(g_settings.temp_max) + "C");
+  drawSetValue(5, String(g_settings.hum_min) + "%");
+  drawSetValue(6, String(g_settings.hum_max) + "%");
 }
 
 void renderSettingsScreen() {
@@ -272,25 +286,21 @@ void renderSettingsScreen() {
   layoutDetailButtons();
   drawBtn(btnBack, "< Back", TFT_DARKGREY);
 
-  // Header "Alerts" button (top-right) → alert-settings sub-screen. Mirrors the
-  // "Config" button on the notifications list screen; clear of the centered
-  // title and the top-left back-button hit zone.
-  btnSetNotif = {w - 96, 6, 88, HEADER_HEIGHT_PX - 12};
-  drawBtn(btnSetNotif, "Alerts", 0x2945);
-
   layoutSettings();
 
-  const char* labels[6] = {
-    "Buzzer", "Door alert", "Temp min", "Temp max", "Humidity min", "Humidity max"
+  const char* labels[7] = {
+    "Buzzer", "Alerts", "Door alert", "Temp min", "Temp max", "Humidity min", "Humidity max"
   };
   tft.setTextDatum(ML_DATUM);
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  for (int i = 0; i < 6; i++)
+  for (int i = 0; i < 7; i++)
     tft.drawString(labels[i], SIDE_PADDING_PX, setRowY(i) + 2 + SET_BTN_H / 2);
 
-  // Row 0 opens the buzzer sub-screen (volume/pitch/duration/melody).
+  // Rows 0-1 open sub-screens: buzzer (volume/pitch/...) and alerts (expiry/
+  // new-item/temp+humidity range config).
   drawBtn(btnSetBuzzer, "Options >", TFT_NAVY);
+  drawBtn(btnSetAlerts, "Options >", 0x2945);
 
   drawBtn(btnDoorM, "-", TFT_DARKGREY); drawBtn(btnDoorP, "+", TFT_DARKGREY);
   drawBtn(btnTMinM, "-", TFT_DARKGREY); drawBtn(btnTMinP, "+", TFT_DARKGREY);
@@ -311,23 +321,24 @@ void handleSettingsTouch(int x, int y) {
   // thresholds (in case a reading is now out of range).
   if (inBtn(btnBackHit, x, y)) {
     saveSettings();
+    pushSettingsToRTDB();   // sync door/temp/humidity changes to the app
     g_view = VIEW_HOME;
     renderHomeScreen();
     checkEnvironmentAlert();
     return;
   }
 
-  // Header "Alerts" opens the alert-settings sub-screen; persist current
+  // Row 0 "Options >" opens the buzzer sub-screen.
+  if (inBtn(btnSetBuzzer, x, y)) { openBuzzerScreen(); return; }
+
+  // Row 1 "Options >" opens the alert-settings sub-screen; persist current
   // settings first (the sub-screen returns here on Back).
-  if (inBtn(btnSetNotif, x, y)) {
+  if (inBtn(btnSetAlerts, x, y)) {
     saveSettings();
     g_notif_settings_prev = VIEW_SETTINGS;
     openNotifSettingsScreen();
     return;
   }
-
-  // Row 0 "Options >" opens the buzzer sub-screen.
-  if (inBtn(btnSetBuzzer, x, y)) { openBuzzerScreen(); return; }
 
   bool changed = false;
   if      (inBtn(btnDoorM, x, y)) { g_settings.door_alert_s = max(5,   g_settings.door_alert_s - 5); changed = true; }
@@ -421,6 +432,7 @@ void handleBuzzerTouch(int x, int y) {
   // Back returns to the main Settings screen (persisting first).
   if (inBtn(btnBackHit, x, y)) {
     saveSettings();
+    pushSettingsToRTDB();   // sync buzzer changes to the app
     g_view = VIEW_SETTINGS;
     renderSettingsScreen();
     return;
