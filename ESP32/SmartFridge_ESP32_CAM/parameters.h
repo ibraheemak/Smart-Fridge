@@ -150,3 +150,8 @@ static uint8_t CH_MAC_ADDR[6] = { 0xA8, 0x42, 0xE3, 0x46, 0xE0, 0x64 };
 // TIMEZONE
 // ----------------------------------------------------------------------------
 #define TIMEZONE "IST-2IDT,M3.4.4/26,M10.5.0"
+
+// If NTP still hasn't synced (clock reads 1970), loop() retries this often.
+// Until it succeeds, timestamped writes are skipped rather than recorded
+// with a bogus 1970 date — see isTimeSynced() in firebase.h.
+#define TIME_RESYNC_INTERVAL_MS  60000

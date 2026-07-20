@@ -11,6 +11,28 @@
 // ============================================================================
 // Timestamp helpers
 // ============================================================================
+// The ESP32's clock starts at the epoch, so until NTP syncs, time() reports
+// 1970. Anything stamped in that window used to land in Firestore as a bogus
+// 1970 value — that's where the junk "1970-01-01T..." scan documents came
+// from, and the app's "Captured at 1970-01-01" caption.
+//
+// The damage differs by *where* the date lands, so the handling does too:
+//   * In the document PATH (scan history's doc ID, the monthly bought bucket)
+//     a 1970 date creates junk documents that pollute the history and skew
+//     analytics — those writes are skipped until the clock is real.
+//   * In a plain FIELD (updatedAt, capturedAt) the raw value is still written.
+//     It must be: the app detects "my Live View request was answered" by the
+//     capturedAt string changing between frames, so blanking it would make
+//     every new photo look identical and the app would wrongly report the
+//     camera offline. The app already treats any pre-2020 stamp as "unknown"
+//     and shows "Latest frame" instead of a wrong date.
+//
+// The real cure is not spending time unsynced at all — see the NTP retry in
+// the sketch's loop().
+#define TIME_SYNCED_EPOCH  1577836800L   // 2020-01-01 UTC; below this = unsynced
+
+bool isTimeSynced() { return time(nullptr) >= TIME_SYNCED_EPOCH; }
+
 String getFormattedTimestamp() {
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);
@@ -188,6 +210,12 @@ String quoteFieldPath(const String& name) {
 // roofs since this is a fridge-wide purchase analytic, not roof-specific.
 void saveBoughtItems(DynamicJsonDocument& old_doc, JsonDocument& new_items_doc) {
   if (WiFi.status() != WL_CONNECTED) return;
+  // The month is part of the document path — skip rather than create a
+  // bogus "1970-01" bucket that would pollute the purchase analytics.
+  if (!isTimeSynced()) {
+    Serial.println("[BOUGHT] skipped — clock not NTP-synced yet");
+    return;
+  }
 
   JsonArray new_items = new_items_doc["items"].as<JsonArray>();
 
@@ -409,6 +437,13 @@ bool saveScanHistory(JsonDocument& items_doc) {
   if (!items_doc.containsKey("items")) return false;
   if (items_doc["items"].as<JsonArray>().size() == 0) {
     Serial.println("[FIREBASE] scan skipped — no items detected");
+    return false;
+  }
+  // The scan's document ID *is* its timestamp. Without a synced clock this
+  // would create junk "1970-01-01T..." history docs (and skew the analytics
+  // counts), so skip the history write until NTP lands.
+  if (!isTimeSynced()) {
+    Serial.println("[FIREBASE] scan history skipped — clock not NTP-synced yet");
     return false;
   }
 

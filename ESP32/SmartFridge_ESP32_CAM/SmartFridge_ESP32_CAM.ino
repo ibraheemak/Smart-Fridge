@@ -38,6 +38,7 @@
 // ============================================================================
 unsigned long lastTempReadMs = 0;
 unsigned long lastWifiRetryMs = 0;
+unsigned long lastTimeSyncMs = 0;
 bool wasOffline = false;
 String savedWifiSSID;
 String savedWifiPass;
@@ -90,9 +91,16 @@ void initWiFi() {
 
 void configureTime() {
   configTzTime(TIMEZONE, "pool.ntp.org", "time.nist.gov");
-  time_t now = time(nullptr);
   unsigned long t0 = millis();
-  while (now < 24 * 3600 && millis() - t0 < 10000) { delay(250); now = time(nullptr); }
+  while (!isTimeSynced() && millis() - t0 < 10000) delay(250);
+  if (isTimeSynced()) {
+    Serial.printf("[TIME] NTP synced: %s\n", getFormattedTimestamp().c_str());
+  } else {
+    // Common when the board boots faster than the router/DNS is ready. The
+    // old code gave up here and ran all day on a 1970 clock; loop() now keeps
+    // retrying, and timestamped writes are skipped until the clock is real.
+    Serial.println("[TIME] NTP not synced yet — will keep retrying from loop()");
+  }
 }
 
 // ============================================================================
@@ -253,6 +261,14 @@ void loop() {
     if (wasOffline) {
       Serial.println("[LOOP] WiFi restored");
       wasOffline = false;
+    }
+    // NTP often isn't reachable at boot (router/DNS not up yet). Keep retrying
+    // so the board doesn't spend the whole session stamping 1970 — until this
+    // succeeds, scan history and bought counters are skipped.
+    if (!isTimeSynced() && millis() - lastTimeSyncMs >= TIME_RESYNC_INTERVAL_MS) {
+      lastTimeSyncMs = millis();
+      Serial.println("[TIME] clock still unsynced — retrying NTP");
+      configTzTime(TIMEZONE, "pool.ntp.org", "time.nist.gov");
     }
     replayOfflinePhotos();
   }
