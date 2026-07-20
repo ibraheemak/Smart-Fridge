@@ -280,7 +280,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         childAspectRatio: 0.70,
                       ),
                       delegate: SliverChildBuilderDelegate(
-                        (_, i) => _InventoryCard(item: items[i]),
+                        (_, i) => _InventoryCard(
+                          item: items[i],
+                          onTap: () => _showItemSheet(context, items[i]),
+                        ),
                         childCount: items.length,
                       ),
                     ),
@@ -292,12 +295,211 @@ class _InventoryScreenState extends State<InventoryScreen> {
       ),
     );
   }
+
+  void _showItemSheet(BuildContext context, FridgeItem item) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surfaceContainerLowest,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _ItemActionsSheet(item: item),
+    );
+  }
+}
+
+// ── Item actions bottom sheet: adjust quantity / remove ───────────────────────
+class _ItemActionsSheet extends StatefulWidget {
+  final FridgeItem item;
+
+  const _ItemActionsSheet({required this.item});
+
+  @override
+  State<_ItemActionsSheet> createState() => _ItemActionsSheetState();
+}
+
+class _ItemActionsSheetState extends State<_ItemActionsSheet> {
+  late int _qty;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _qty = int.tryParse(widget.item.quantity) ?? 1;
+    if (_qty < 1) _qty = 1;
+  }
+
+  Future<void> _save() async {
+    setState(() => _busy = true);
+    await FridgeService.setInventoryQuantity(widget.item.name, _qty);
+    if (mounted) Navigator.pop(context);
+  }
+
+  Future<void> _remove() async {
+    setState(() => _busy = true);
+    await FridgeService.removeInventoryItem(widget.item.name);
+    if (!mounted) return;
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${widget.item.displayName} removed from fridge'),
+        backgroundColor: AppColors.onSurface,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final changed = _qty != (int.tryParse(widget.item.quantity) ?? _qty);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.outlineVariant,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Header
+            Row(
+              children: [
+                ItemIcon(itemName: widget.item.name, size: 48),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(widget.item.displayName,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w700)),
+                      Text(widget.item.expiryLabel,
+                          style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+
+            // Quantity stepper
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Quantity',
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w600)),
+                Row(
+                  children: [
+                    _QtyButton(
+                      icon: Icons.remove_rounded,
+                      onTap: _qty > 1 && !_busy
+                          ? () => setState(() => _qty--)
+                          : null,
+                    ),
+                    Padding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 18),
+                      child: Text('$_qty',
+                          style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800)),
+                    ),
+                    _QtyButton(
+                      icon: Icons.add_rounded,
+                      onTap: !_busy ? () => setState(() => _qty++) : null,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Save quantity (only when changed)
+            if (changed)
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _busy ? null : _save,
+                  style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12))),
+                  child: Text('Update quantity to $_qty'),
+                ),
+              ),
+            if (changed) const SizedBox(height: 10),
+
+            // Remove
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _busy ? null : _remove,
+                icon: const Icon(Icons.delete_outline_rounded,
+                    color: AppColors.error),
+                label: const Text('Remove from fridge',
+                    style: TextStyle(color: AppColors.error)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: AppColors.error),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QtyButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  const _QtyButton({required this.icon, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: enabled
+              ? AppColors.primaryFixed
+              : AppColors.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon,
+            size: 20,
+            color: enabled ? AppColors.primary : AppColors.outline),
+      ),
+    );
+  }
 }
 
 class _InventoryCard extends StatelessWidget {
   final FridgeItem item;
+  final VoidCallback onTap;
 
-  const _InventoryCard({required this.item});
+  const _InventoryCard({required this.item, required this.onTap});
 
   Color get _borderColor {
     switch (item.expiryStatus) {
@@ -315,7 +517,9 @@ class _InventoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       decoration: BoxDecoration(
         color: AppColors.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(20),
@@ -385,6 +589,7 @@ class _InventoryCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }

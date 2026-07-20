@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -135,6 +136,79 @@ class FridgeService {
       if (data == null) return <String, int>{};
       return data.map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0));
     });
+  }
+
+  // ── Manual inventory edits (app → /current) ───────────────────────────────
+  // Interim: the app edits inventory/current directly inside a transaction,
+  // then rings the RTDB doorbell so the CH board re-merges and its TFT
+  // refreshes. When the firmware's inventory_ops queue lands, these become
+  // op-doc writes and the CH board becomes the sole writer of /current.
+
+  static DocumentReference<Map<String, dynamic>> get _currentRef =>
+      _db.collection('fridges').doc(AppConfig.fridgeId)
+          .collection('inventory').doc('current');
+
+  static bool _nameEq(dynamic itemName, String target) =>
+      (itemName as String?)?.toLowerCase().trim() == target.toLowerCase().trim();
+
+  /// Remove an item from the fridge entirely.
+  static Future<void> removeInventoryItem(String name) async {
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(_currentRef);
+      final data = snap.data();
+      if (data == null) return;
+      final items = List<Map<String, dynamic>>.from(
+          (data['items'] as List<dynamic>? ?? [])
+              .map((e) => Map<String, dynamic>.from(e as Map)));
+      items.removeWhere((e) => _nameEq(e['name'], name));
+      tx.update(_currentRef, {'items': items});
+    });
+    // Best-effort: notify the CH board, but don't make the user wait on it.
+    unawaited(_bumpInventoryDoorbell());
+  }
+
+  /// Set an item's quantity. Dropping the count trims the expiries array
+  /// (empty slots first, then the soonest dates) so it never lists more
+  /// dates than units. A quantity of 0 removes the item.
+  static Future<void> setInventoryQuantity(String name, int qty) async {
+    if (qty <= 0) return removeInventoryItem(name);
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(_currentRef);
+      final data = snap.data();
+      if (data == null) return;
+      final items = List<Map<String, dynamic>>.from(
+          (data['items'] as List<dynamic>? ?? [])
+              .map((e) => Map<String, dynamic>.from(e as Map)));
+      for (final e in items) {
+        if (!_nameEq(e['name'], name)) continue;
+        final expiries =
+            (e['expiries'] as List<dynamic>? ?? []).whereType<String>().toList();
+        if (expiries.length > qty) {
+          expiries.sort((a, b) {
+            if (a.isEmpty) return -1; // empty slots removed first
+            if (b.isEmpty) return 1;
+            return a.compareTo(b); // then soonest dates
+          });
+          expiries.removeRange(0, expiries.length - qty);
+        }
+        e['quantity'] = qty.toString();
+        e['expiries'] = expiries;
+        break;
+      }
+      tx.update(_currentRef, {'items': items});
+    });
+    unawaited(_bumpInventoryDoorbell());
+  }
+
+  /// Ring the RTDB "inventory changed" doorbell the CH board listens on.
+  static Future<void> _bumpInventoryDoorbell() async {
+    try {
+      await _rtdb
+          .ref('fridges/${AppConfig.fridgeId}/inventory_meta/updated_at')
+          .set(ServerValue.timestamp);
+    } catch (_) {
+      // Non-fatal — the CH board also re-merges on its own poll cycle.
+    }
   }
 
   // ── Live View (RTDB request → CAM board → Firestore photo) ─────────────────
