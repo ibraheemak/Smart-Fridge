@@ -330,11 +330,16 @@ class FridgeService {
     return DateTime.now().difference(t) < within;
   }
 
-  /// Firebase Storage URL for an item icon. The app generates and uploads
-  /// PNGs; the CH display board uses a separate JPEG set (icons/{name}.jpg)
-  /// — ItemIcon tries both before generating a new one.
-  static String iconUrl(String itemName, {String extension = 'png'}) {
-    final key = itemName.toLowerCase().trim();
+  /// Firebase Storage URL for an item icon.
+  ///
+  /// The object name is the item's name EXACTLY as stored (capitals kept), so
+  /// it matches both what IconGeneratorService uploads and what the CH display
+  /// board fetches with the raw Firestore name. Pass [legacyLowercase] to look
+  /// up icons written by the old lowercasing pipeline.
+  static String iconUrl(String itemName,
+      {String extension = 'jpg', bool legacyLowercase = false}) {
+    final name = itemName.trim();
+    final key = legacyLowercase ? name.toLowerCase() : name;
     final encoded = Uri.encodeComponent('icons/$key.$extension');
     return 'https://firebasestorage.googleapis.com/v0/b'
         '/${AppConfig.storageBucket}/o/$encoded?alt=media';
