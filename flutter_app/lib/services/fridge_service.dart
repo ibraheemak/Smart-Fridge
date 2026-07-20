@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import '../config.dart';
 import '../models/fridge_item.dart';
 import '../models/scan_record.dart';
+import 'fridge_session.dart';
 
 class ShoppingItem {
   final String id; // Firestore document ID
@@ -23,8 +24,13 @@ class ShoppingItem {
 
 class FridgeService {
   static final _db = FirebaseFirestore.instance;
+
+  /// The fridge the signed-in user is linked to (falls back to the default
+  /// while a session is resolving or in single-fridge dev use).
+  static String get _fid => FridgeSession.fridgeId ?? AppConfig.fridgeId;
+
   static DocumentReference get _fridgeRef =>
-      _db.collection('fridges').doc(AppConfig.fridgeId);
+      _db.collection('fridges').doc(_fid);
 
   // firebase_options.dart doesn't set databaseURL, so the default
   // FirebaseDatabase.instance can't find the RTDB instance — point it at the
@@ -145,7 +151,7 @@ class FridgeService {
   // op-doc writes and the CH board becomes the sole writer of /current.
 
   static DocumentReference<Map<String, dynamic>> get _currentRef =>
-      _db.collection('fridges').doc(AppConfig.fridgeId)
+      _db.collection('fridges').doc(_fid)
           .collection('inventory').doc('current');
 
   static bool _nameEq(dynamic itemName, String target) =>
@@ -237,7 +243,7 @@ class FridgeService {
   static Future<void> _bumpInventoryDoorbell() async {
     try {
       await _rtdb
-          .ref('fridges/${AppConfig.fridgeId}/inventory_meta/updated_at')
+          .ref('fridges/$_fid/inventory_meta/updated_at')
           .set(ServerValue.timestamp);
     } catch (_) {
       // Non-fatal — the CH board also re-merges on its own poll cycle.
@@ -248,7 +254,7 @@ class FridgeService {
 
   static Future<void> requestLiveViewSnapshot(int roof) {
     return _rtdb
-        .ref('fridges/${AppConfig.fridgeId}/liveview_requests/roof$roof/requested_at')
+        .ref('fridges/$_fid/liveview_requests/roof$roof/requested_at')
         .set(ServerValue.timestamp);
   }
 

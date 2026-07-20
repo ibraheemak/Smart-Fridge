@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
-import '../services/role_service.dart';
+import '../services/fridge_session.dart';
 import '../theme/app_theme.dart';
 
 class UsersScreen extends StatelessWidget {
@@ -11,7 +11,8 @@ class UsersScreen extends StatelessWidget {
     final user = AuthService.currentUser;
     final displayName = AuthService.displayName;
     final email = user?.email ?? '';
-    final isAdmin = RoleService.isAdmin;
+    final isAdmin = FridgeSession.isAdmin;
+    final fridgeId = FridgeSession.fridgeId ?? '';
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -92,6 +93,12 @@ class UsersScreen extends StatelessWidget {
             const SizedBox(height: 24),
 
             // ── Member management (admin only) ───────────────────────────
+            // ── Fridge ID (share with family so they can join) ───────────
+            if (fridgeId.isNotEmpty) ...[
+              _FridgeIdCard(fridgeId: fridgeId),
+              const SizedBox(height: 24),
+            ],
+
             if (isAdmin) ...[
               Text(
                 'HOUSEHOLD MEMBERS',
@@ -102,7 +109,7 @@ class UsersScreen extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               const Text(
-                'As the Homeowner you control who is an admin.',
+                'Approve people who requested access, and manage who is a manager.',
                 style: TextStyle(
                     fontSize: 12, color: AppColors.onSurfaceVariant),
               ),
@@ -178,6 +185,12 @@ class UsersScreen extends StatelessWidget {
                 );
                 if (confirmed == true) {
                   await AuthService.signOut();
+                  // This screen is pushed on top of the app; pop back to the
+                  // root so the sign-out lands on the login screen instead of
+                  // leaving this (now stale) screen showing.
+                  if (context.mounted) {
+                    Navigator.of(context).popUntil((r) => r.isFirst);
+                  }
                 }
               },
             ),
@@ -201,12 +214,13 @@ class UsersScreen extends StatelessWidget {
                   Expanded(
                     child: Text(
                       isAdmin
-                          ? 'Family members sign in with their own account on '
-                              'their devices. The first person to sign in becomes '
-                              'the Homeowner; everyone after joins as a Family member.'
-                          : 'You are a Family member. You can use every feature '
-                              'except managing members and changing alert settings. '
-                              'Contact the Homeowner for those.',
+                          ? 'Share your Fridge ID so family can connect on their '
+                              'own devices. New members appear here as a request '
+                              'to approve. The first person to connect a fridge '
+                              'becomes its manager.'
+                          : 'You are a member. You can use every feature except '
+                              'managing members and changing alert settings. '
+                              'Contact the manager for those.',
                       style: const TextStyle(
                           fontSize: 12,
                           color: AppColors.onSurfaceVariant),
@@ -243,9 +257,53 @@ class _RoleChip extends StatelessWidget {
               size: 14, color: color),
           const SizedBox(width: 6),
           Text(
-            isAdmin ? 'Homeowner (Admin)' : 'Family member',
+            isAdmin ? 'Manager' : 'Member',
             style: TextStyle(
                 fontSize: 12, fontWeight: FontWeight.w700, color: color),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FridgeIdCard extends StatelessWidget {
+  final String fridgeId;
+
+  const _FridgeIdCard({required this.fridgeId});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: AppColors.outlineVariant.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.kitchen_rounded, color: AppColors.primary, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Fridge ID',
+                    style: TextStyle(
+                        fontSize: 11, color: AppColors.onSurfaceVariant)),
+                Text(fridgeId,
+                    style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.onSurface)),
+                const Text('Share this so family can join your fridge',
+                    style: TextStyle(
+                        fontSize: 11, color: AppColors.onSurfaceVariant)),
+              ],
+            ),
           ),
         ],
       ),
@@ -261,7 +319,7 @@ class _MembersList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<Member>>(
-      stream: RoleService.membersStream(),
+      stream: FridgeSession.membersStream(),
       builder: (context, snap) {
         final members = snap.data ?? [];
         if (members.isEmpty) {
@@ -271,15 +329,33 @@ class _MembersList extends StatelessWidget {
                 style: TextStyle(color: AppColors.onSurfaceVariant)),
           );
         }
-        final adminCount = members.where((m) => m.isAdmin).length;
+        final pending = members.where((m) => m.isPending).toList();
+        final active = members.where((m) => !m.isPending).toList();
+        final adminCount = active.where((m) => m.isAdmin).length;
+
         return Column(
-          children: members
-              .map((m) => _MemberTile(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (pending.isNotEmpty) ...[
+              const Text('Requests to join',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.error)),
+              const SizedBox(height: 8),
+              ...pending.map((m) => _MemberTile(
                     member: m,
                     isSelf: m.uid == currentUid,
-                    isLastAdmin: m.isAdmin && adminCount <= 1,
-                  ))
-              .toList(),
+                    isLastAdmin: false,
+                  )),
+              const SizedBox(height: 12),
+            ],
+            ...active.map((m) => _MemberTile(
+                  member: m,
+                  isSelf: m.uid == currentUid,
+                  isLastAdmin: m.isAdmin && adminCount <= 1,
+                )),
+          ],
         );
       },
     );
@@ -306,7 +382,9 @@ class _MemberTile extends StatelessWidget {
         color: AppColors.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-            color: AppColors.outlineVariant.withValues(alpha: 0.4)),
+            color: member.isPending
+                ? AppColors.error.withValues(alpha: 0.4)
+                : AppColors.outlineVariant.withValues(alpha: 0.4)),
       ),
       child: Row(
         children: [
@@ -355,44 +433,70 @@ class _MemberTile extends StatelessWidget {
                   ],
                 ),
                 Text(
-                  member.isAdmin ? 'Homeowner' : 'Family member',
+                  member.isPending
+                      ? 'Requested access'
+                      : member.isAdmin
+                          ? 'Manager'
+                          : 'Member',
                   style: TextStyle(
                       fontSize: 11,
-                      color: member.isAdmin
-                          ? AppColors.primary
-                          : AppColors.onSurfaceVariant),
+                      color: member.isPending
+                          ? AppColors.error
+                          : member.isAdmin
+                              ? AppColors.primary
+                              : AppColors.onSurfaceVariant),
                 ),
               ],
             ),
           ),
-          // Role menu — can't demote the last admin, or act on the wrong row.
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded,
-                color: AppColors.onSurfaceVariant),
-            onSelected: (v) async {
-              if (v == 'make_admin') {
-                await RoleService.setMemberRole(member.uid, 'admin');
-              } else if (v == 'make_family') {
-                await RoleService.setMemberRole(member.uid, 'family');
-              } else if (v == 'remove') {
-                await RoleService.removeMember(member.uid);
-              }
-            },
-            itemBuilder: (_) => [
-              if (!member.isAdmin)
-                const PopupMenuItem(
-                    value: 'make_admin', child: Text('Make Homeowner')),
-              if (member.isAdmin && !isLastAdmin)
-                const PopupMenuItem(
-                    value: 'make_family',
-                    child: Text('Change to Family')),
-              if (!isSelf)
-                const PopupMenuItem(
-                    value: 'remove',
-                    child: Text('Remove access',
-                        style: TextStyle(color: AppColors.error))),
-            ],
-          ),
+
+          // Pending → Approve / Deny. Active → role menu.
+          if (member.isPending)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Approve',
+                  icon: const Icon(Icons.check_circle_rounded,
+                      color: AppColors.secondary),
+                  onPressed: () => FridgeSession.approveMember(member.uid),
+                ),
+                IconButton(
+                  tooltip: 'Decline',
+                  icon: const Icon(Icons.cancel_rounded,
+                      color: AppColors.error),
+                  onPressed: () => FridgeSession.removeMember(member.uid),
+                ),
+              ],
+            )
+          else
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert_rounded,
+                  color: AppColors.onSurfaceVariant),
+              onSelected: (v) async {
+                if (v == 'make_admin') {
+                  await FridgeSession.setMemberRole(member.uid, 'admin');
+                } else if (v == 'make_family') {
+                  await FridgeSession.setMemberRole(member.uid, 'family');
+                } else if (v == 'remove') {
+                  await FridgeSession.removeMember(member.uid);
+                }
+              },
+              itemBuilder: (_) => [
+                if (!member.isAdmin)
+                  const PopupMenuItem(
+                      value: 'make_admin', child: Text('Make Manager')),
+                if (member.isAdmin && !isLastAdmin)
+                  const PopupMenuItem(
+                      value: 'make_family',
+                      child: Text('Change to Member')),
+                if (!isSelf)
+                  const PopupMenuItem(
+                      value: 'remove',
+                      child: Text('Remove access',
+                          style: TextStyle(color: AppColors.error))),
+              ],
+            ),
         ],
       ),
     );

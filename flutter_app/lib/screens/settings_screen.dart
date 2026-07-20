@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/fridge_service.dart';
 import '../services/icon_generator_service.dart';
-import '../services/role_service.dart';
+import '../services/fridge_session.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import 'analytics_screen.dart';
@@ -35,7 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final user = AuthService.currentUser;
     final name = AuthService.displayName;
     // Alert thresholds and icon regeneration are Homeowner-only.
-    final isAdmin = RoleService.isAdmin;
+    final isAdmin = FridgeSession.isAdmin;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -79,7 +79,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                    'Only the Homeowner can change these.',
+                                    'Only the manager can change these.',
                                     style: TextStyle(
                                         fontSize: 11,
                                         color: AppColors.onSurfaceVariant)),
