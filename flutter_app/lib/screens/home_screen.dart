@@ -448,7 +448,11 @@ class _LiveFridgeCard extends StatelessWidget {
                 children: [
                   // Background
                   photo != null
-                      ? Image.memory(photo, fit: BoxFit.cover)
+                      // Camera is mounted rotated — turn the feed 90° CW.
+                      ? RotatedBox(
+                          quarterTurns: 1,
+                          child: Image.memory(photo, fit: BoxFit.cover),
+                        )
                       : Container(
                           color: AppColors.surfaceContainerHighest,
                           child: const Icon(
