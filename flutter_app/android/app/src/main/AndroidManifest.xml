@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- INTERNET permission needed for Firestore, Gemini, and ESP32-CAM image -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Local notifications for expiry / temperature / door alerts -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Smart Fridge"
         android:name="${applicationName}"
