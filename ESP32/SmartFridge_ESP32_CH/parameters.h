@@ -175,6 +175,10 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
 // ----------------------------------------------------------------------------
 // FIREBASE STORAGE — item icons
 // ----------------------------------------------------------------------------
+// The app uploads each icon at icons/{name}.jpg as a 350x350, 72-DPI,
+// BASELINE (non-progressive) JPEG — the format this board's decoder needs
+// (it can't handle PNG or progressive JPEG). fetchIconJpeg + the TJpg
+// downscale path below reduce that source to ICON_SIZE_PX on screen.
 #define FIREBASE_STORAGE_BUCKET  "smartfridge-79217.firebasestorage.app"
 #define ICON_PATH_PREFIX         "icons/"
 #define ICON_EXTENSION           ".jpg"

@@ -7,8 +7,9 @@ import '../theme/app_theme.dart';
 
 /// Smart item icon — 5-tier fallback:
 /// 1. Bundled asset  (assets/icons/{key}.png)  — instant, no network
-/// 2. Firebase Storage (icons/{key}.png)        — app-generated set
-/// 3. Firebase Storage (icons/{key}.jpg)        — the CH display board's set
+/// 2. Firebase Storage (icons/{key}.jpg)        — 350×350 baseline set shared
+///    with the CH display board (what the app generates now)
+/// 3. Firebase Storage (icons/{key}.png)        — legacy PNGs from the old pipeline
 /// 4. Gemini AI generation                      — for new items
 /// 5. Coloured letter avatar                    — last resort
 class ItemIcon extends StatefulWidget {
@@ -120,9 +121,10 @@ class _ItemIconState extends State<ItemIcon> {
       return Image.memory(_generated!, fit: BoxFit.cover);
     }
 
-    // Tier 2: Firebase Storage PNG (app-generated set)
+    // Tier 2: Firebase Storage JPEG (the 350×350 baseline set shared with the
+    // CH display board — what the app generates now).
     return CachedNetworkImage(
-      imageUrl: FridgeService.iconUrl(widget.itemName),
+      imageUrl: FridgeService.iconUrl(widget.itemName, extension: 'jpg'),
       fit: BoxFit.cover,
       fadeInDuration: const Duration(milliseconds: 200),
       placeholder: (_, __) => _Placeholder(
@@ -131,9 +133,9 @@ class _ItemIconState extends State<ItemIcon> {
         size: widget.size,
       ),
       errorWidget: (_, __, ___) =>
-          // Tier 3: Storage JPEG — the set the CH display board uses
+          // Tier 3: legacy Storage PNG (icons uploaded by the old pipeline)
           CachedNetworkImage(
-        imageUrl: FridgeService.iconUrl(widget.itemName, extension: 'jpg'),
+        imageUrl: FridgeService.iconUrl(widget.itemName, extension: 'png'),
         fit: BoxFit.cover,
         fadeInDuration: const Duration(milliseconds: 200),
         placeholder: (_, __) => _Placeholder(
