@@ -320,15 +320,30 @@ class FridgeService {
 
   // ── Utilities ─────────────────────────────────────────────────────────────
 
-  /// True when a liveview capturedAt ("YYYY-MM-DD HH:MM:SS", ESP32 local
-  /// time) is recent enough to present as live rather than a stored snapshot.
+  /// Parsed capture time, or null when the camera's clock wasn't NTP-synced
+  /// yet (it stamps 1970 before sync) or the value is missing/malformed.
+  static DateTime? parseCapture(String? capturedAt) {
+    if (capturedAt == null) return null;
+    final t = DateTime.tryParse(capturedAt.replaceFirst(' ', 'T'));
+    if (t == null || t.isBefore(DateTime(2020))) return null;
+    return t;
+  }
+
+  /// True when a liveview capture is recent enough to present as live rather
+  /// than a stored snapshot.
   static bool isRecentCapture(String? capturedAt,
       {Duration within = const Duration(minutes: 2)}) {
-    if (capturedAt == null) return false;
-    final t = DateTime.tryParse(capturedAt.replaceFirst(' ', 'T'));
+    final t = parseCapture(capturedAt);
     if (t == null) return false;
-    return DateTime.now().difference(t) < within;
+    return DateTime.now().difference(t).abs() < within;
   }
+
+  /// Caption for the live photo: a real time if the camera clock is set,
+  /// otherwise a neutral label instead of a bogus 1970 date.
+  static String captureCaption(String? capturedAt) =>
+      parseCapture(capturedAt) == null
+          ? 'Latest frame'
+          : 'Captured at $capturedAt';
 
   /// Firebase Storage URL for an item icon.
   ///
