@@ -172,8 +172,13 @@ class _CameraScreenState extends State<CameraScreen> {
                             color: AppColors.surfaceContainerHighest,
                             child: photo != null
                                 ? InteractiveViewer(
-                                    child: Image.memory(photo,
-                                        fit: BoxFit.contain))
+                                    // Camera is mounted rotated — turn 90° CW.
+                                    child: RotatedBox(
+                                      quarterTurns: 1,
+                                      child: Image.memory(photo,
+                                          fit: BoxFit.contain),
+                                    ),
+                                  )
                                 : Center(
                                     child: Padding(
                                       padding: const EdgeInsets.all(32),
