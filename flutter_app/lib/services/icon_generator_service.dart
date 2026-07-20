@@ -34,7 +34,13 @@ class IconGeneratorService {
   static final _cache = <String, Uint8List?>{};
   static final _inFlight = <String, Future<Uint8List?>>{};
 
-  static String _key(String itemName) => itemName.toLowerCase().trim();
+  /// Storage key = the item's name EXACTLY as Gemini/the barcode gave it,
+  /// capitals included ("Black chocolate" -> icons/Black chocolate.jpg).
+  /// It must match verbatim: the CH display board fetches
+  /// icons/{item_name}.jpg using the raw Firestore name (display.h
+  /// fetchIconJpeg), so lowercasing here meant the fridge screen could never
+  /// find the icons the app uploaded.
+  static String _key(String itemName) => itemName.trim();
 
   /// Normalize any decodable image (PNG/JPEG/…) to the fridge-icon spec:
   /// square-cropped to 350×350, baseline JPEG, 72 DPI. Returns null if the

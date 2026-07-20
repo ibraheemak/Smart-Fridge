@@ -38,7 +38,9 @@ class _ItemIconState extends State<ItemIcon> {
   bool _generating = false;
   bool _generationFailed = false;
 
-  String get _key => widget.itemName.toLowerCase().trim();
+  /// Bundled assets ship as lowercase filenames (assets/icons/milk.png), so
+  /// that lookup stays lowercased. Storage objects use the item's exact name.
+  String get _assetKey => widget.itemName.toLowerCase().trim();
 
   @override
   void initState() {
@@ -66,7 +68,7 @@ class _ItemIconState extends State<ItemIcon> {
   Future<void> _loadAsset() async {
     try {
       final data =
-          await rootBundle.load('assets/icons/$_key.png');
+          await rootBundle.load('assets/icons/$_assetKey.png');
       if (mounted) {
         setState(() {
           _asset = data.buffer.asUint8List();
@@ -121,10 +123,39 @@ class _ItemIconState extends State<ItemIcon> {
       return Image.memory(_generated!, fit: BoxFit.cover);
     }
 
-    // Tier 2: Firebase Storage JPEG (the 350×350 baseline set shared with the
-    // CH display board — what the app generates now).
+    // Tier 2+: Firebase Storage. The exact-name object is what we upload now
+    // and what the CH display board fetches; the lowercase ones are legacy
+    // objects from before icons kept their capitals, kept as a fallback so
+    // existing icons still show until they're regenerated.
+    // Set literal: an already-lowercase name would otherwise repeat a URL.
+    final urls = <String>{
+      FridgeService.iconUrl(widget.itemName, extension: 'jpg'),
+      FridgeService.iconUrl(widget.itemName,
+          extension: 'jpg', legacyLowercase: true),
+      FridgeService.iconUrl(widget.itemName,
+          extension: 'png', legacyLowercase: true),
+    }.toList();
+
+    return _storageChain(urls, 0);
+  }
+
+  /// Try each Storage URL in order; when they all miss, fall through to Gemini
+  /// generation and finally the coloured letter avatar.
+  Widget _storageChain(List<String> urls, int i) {
+    if (i >= urls.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startGeneration());
+      if (_generating) {
+        return _Placeholder(
+          loading: true,
+          itemName: widget.itemName,
+          size: widget.size,
+          label: 'AI…',
+        );
+      }
+      return _LetterAvatar(itemName: widget.itemName, size: widget.size);
+    }
     return CachedNetworkImage(
-      imageUrl: FridgeService.iconUrl(widget.itemName, extension: 'jpg'),
+      imageUrl: urls[i],
       fit: BoxFit.cover,
       fadeInDuration: const Duration(milliseconds: 200),
       placeholder: (_, __) => _Placeholder(
@@ -132,34 +163,7 @@ class _ItemIconState extends State<ItemIcon> {
         itemName: widget.itemName,
         size: widget.size,
       ),
-      errorWidget: (_, __, ___) =>
-          // Tier 3: legacy Storage PNG (icons uploaded by the old pipeline)
-          CachedNetworkImage(
-        imageUrl: FridgeService.iconUrl(widget.itemName, extension: 'png'),
-        fit: BoxFit.cover,
-        fadeInDuration: const Duration(milliseconds: 200),
-        placeholder: (_, __) => _Placeholder(
-          loading: true,
-          itemName: widget.itemName,
-          size: widget.size,
-        ),
-        errorWidget: (_, __, ___) {
-          // Storage miss on both sets → try Gemini in background
-          WidgetsBinding.instance
-              .addPostFrameCallback((_) => _startGeneration());
-
-          if (_generating) {
-            return _Placeholder(
-              loading: true,
-              itemName: widget.itemName,
-              size: widget.size,
-              label: 'AI…',
-            );
-          }
-          // Tier 5: letter avatar
-          return _LetterAvatar(itemName: widget.itemName, size: widget.size);
-        },
-      ),
+      errorWidget: (_, __, ___) => _storageChain(urls, i + 1),
     );
   }
 }
