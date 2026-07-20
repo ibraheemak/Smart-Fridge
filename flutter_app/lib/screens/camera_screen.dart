@@ -265,9 +265,11 @@ class _CameraScreenState extends State<CameraScreen> {
                 builder: (context, snap) {
                   final capturedAt = snap.data?.capturedAt;
                   if (capturedAt == null) return const SizedBox.shrink();
+                  // Falls back to a neutral label when the camera's clock
+                  // hasn't NTP-synced (it stamps 1970 until it does).
                   return Center(
                     child: Text(
-                      'Captured at $capturedAt',
+                      FridgeService.captureCaption(capturedAt),
                       style: const TextStyle(
                           fontSize: 11, color: AppColors.onSurfaceVariant),
                     ),
