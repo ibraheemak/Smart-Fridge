@@ -42,6 +42,10 @@ extern bool g_env_alert_on;
 // + expiry-alert config. Reached from this Settings screen's "Alerts" row
 // "Options >" button; g_notif_settings_prev (touch.h) tells it to return here on Back.
 void openNotifSettingsScreen();
+// Mirror the current settings up to Realtime Database so the Flutter app sees
+// them. Defined in settings_sync.h (included after this file); declared here so
+// the Settings/Buzzer Back handlers can push right after they persist to NVS.
+void pushSettingsToRTDB();
 
 // ----------------------------------------------------------------------------
 // Persisted settings
@@ -317,6 +321,7 @@ void handleSettingsTouch(int x, int y) {
   // thresholds (in case a reading is now out of range).
   if (inBtn(btnBackHit, x, y)) {
     saveSettings();
+    pushSettingsToRTDB();   // sync door/temp/humidity changes to the app
     g_view = VIEW_HOME;
     renderHomeScreen();
     checkEnvironmentAlert();
@@ -427,6 +432,7 @@ void handleBuzzerTouch(int x, int y) {
   // Back returns to the main Settings screen (persisting first).
   if (inBtn(btnBackHit, x, y)) {
     saveSettings();
+    pushSettingsToRTDB();   // sync buzzer changes to the app
     g_view = VIEW_SETTINGS;
     renderSettingsScreen();
     return;

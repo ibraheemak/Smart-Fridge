@@ -490,6 +490,7 @@ void openNotifSettingsScreen() {
 void handleNotifSettingsTouch(int x, int y) {
   if (inBtn(btnBackHit, x, y)) {
     saveNotifications();          // persist retention + all alert-type toggles
+    pushSettingsToRTDB();         // sync alert-type config to the app
     purgeOldNotifications();      // apply the retention change immediately
     if (g_notif_settings_prev == VIEW_SETTINGS) {
       g_view = VIEW_SETTINGS;

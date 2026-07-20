@@ -41,6 +41,7 @@
 #include "notifications.h"
 #include "gm65.h"
 #include "recipes.h"
+#include "settings_sync.h"
 #include "rtdb_stream.h"
 
 // ============================================================================
@@ -332,6 +333,13 @@ void setup() {
   initSettings();   // load buzzer/door-alert/temp-humidity prefs, apply them
   loadNotifications();     // restore the persisted alerts log + retention setting
   purgeOldNotifications(); // drop anything already past its retention window
+  // Reconcile all settings with the shared RTDB copy (adopt an app-authored
+  // cloud copy, or seed the cloud from ours), then start the SSE listener that
+  // keeps the screen in step with any later change the app makes. Must run
+  // after initSettings()/loadNotifications() so the globals it may overwrite
+  // already hold their NVS values, and before scanExpiries() below so the
+  // adopted expiry/alert config is in effect for the boot scan.
+  initSettingsSync();
   initGM65();
 
   showStatus("Loading inventory", "");
@@ -418,6 +426,9 @@ void loop() {
 
   // Show a deferred alert once the user is back on an idle screen.
   serviceEnvironmentAlert();
+
+  // App changed a setting -> the RTDB settings listener rang; pull + apply it.
+  settingsSyncPoll();
 
   // Two ways this fires:
   //  1. espnowInventoryUpdated() — a CAM board unicasts "INV:<roof>" straight
