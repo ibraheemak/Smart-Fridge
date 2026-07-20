@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/role_service.dart';
 import '../theme/app_theme.dart';
 
 class UsersScreen extends StatelessWidget {
@@ -10,6 +11,7 @@ class UsersScreen extends StatelessWidget {
     final user = AuthService.currentUser;
     final displayName = AuthService.displayName;
     final email = user?.email ?? '';
+    final isAdmin = RoleService.isAdmin;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -28,7 +30,7 @@ class UsersScreen extends StatelessWidget {
                 fontSize: 20,
                 fontWeight: FontWeight.w700)),
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -82,30 +84,32 @@ class UsersScreen extends StatelessWidget {
                           color: AppColors.onSurfaceVariant),
                     ),
                   ],
-                  if (user?.metadata.creationTime != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryFixed,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        'Member since '
-                        '${user!.metadata.creationTime!.year}-'
-                        '${user.metadata.creationTime!.month.toString().padLeft(2, '0')}',
-                        style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary),
-                      ),
-                    ),
-                  ],
+                  const SizedBox(height: 12),
+                  _RoleChip(isAdmin: isAdmin),
                 ],
               ),
             ),
             const SizedBox(height: 24),
+
+            // ── Member management (admin only) ───────────────────────────
+            if (isAdmin) ...[
+              Text(
+                'HOUSEHOLD MEMBERS',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: AppColors.onSurfaceVariant,
+                      letterSpacing: 0.5,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'As the Homeowner you control who is an admin.',
+                style: TextStyle(
+                    fontSize: 12, color: AppColors.onSurfaceVariant),
+              ),
+              const SizedBox(height: 12),
+              _MembersList(currentUid: user?.uid ?? ''),
+              const SizedBox(height: 24),
+            ],
 
             // ── Actions ──────────────────────────────────────────────────
             Text(
@@ -178,7 +182,7 @@ class UsersScreen extends StatelessWidget {
               },
             ),
 
-            const Spacer(),
+            const SizedBox(height: 24),
 
             // ── Family sharing note ──────────────────────────────────────
             Container(
@@ -189,16 +193,21 @@ class UsersScreen extends StatelessWidget {
                 border: Border.all(
                     color: AppColors.outlineVariant.withValues(alpha: 0.5)),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.info_outline_rounded,
+                  const Icon(Icons.info_outline_rounded,
                       size: 16, color: AppColors.onSurfaceVariant),
-                  SizedBox(width: 10),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'To share this fridge with family, sign in with the '
-                      'same account on their devices.',
-                      style: TextStyle(
+                      isAdmin
+                          ? 'Family members sign in with their own account on '
+                              'their devices. The first person to sign in becomes '
+                              'the Homeowner; everyone after joins as a Family member.'
+                          : 'You are a Family member. You can use every feature '
+                              'except managing members and changing alert settings. '
+                              'Contact the Homeowner for those.',
+                      style: const TextStyle(
                           fontSize: 12,
                           color: AppColors.onSurfaceVariant),
                     ),
@@ -208,6 +217,183 @@ class UsersScreen extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _RoleChip extends StatelessWidget {
+  final bool isAdmin;
+
+  const _RoleChip({required this.isAdmin});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isAdmin ? AppColors.primary : AppColors.secondary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(isAdmin ? Icons.shield_rounded : Icons.person_rounded,
+              size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            isAdmin ? 'Homeowner (Admin)' : 'Family member',
+            style: TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w700, color: color),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MembersList extends StatelessWidget {
+  final String currentUid;
+
+  const _MembersList({required this.currentUid});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Member>>(
+      stream: RoleService.membersStream(),
+      builder: (context, snap) {
+        final members = snap.data ?? [];
+        if (members.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text('No members yet.',
+                style: TextStyle(color: AppColors.onSurfaceVariant)),
+          );
+        }
+        final adminCount = members.where((m) => m.isAdmin).length;
+        return Column(
+          children: members
+              .map((m) => _MemberTile(
+                    member: m,
+                    isSelf: m.uid == currentUid,
+                    isLastAdmin: m.isAdmin && adminCount <= 1,
+                  ))
+              .toList(),
+        );
+      },
+    );
+  }
+}
+
+class _MemberTile extends StatelessWidget {
+  final Member member;
+  final bool isSelf;
+  final bool isLastAdmin;
+
+  const _MemberTile({
+    required this.member,
+    required this.isSelf,
+    required this.isLastAdmin,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: AppColors.outlineVariant.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: member.isAdmin
+                ? AppColors.primaryFixed
+                : AppColors.secondaryContainer,
+            child: Text(
+              member.displayName.isNotEmpty
+                  ? member.displayName[0].toUpperCase()
+                  : '?',
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: member.isAdmin
+                      ? AppColors.primary
+                      : AppColors.onSecondaryContainer),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        member.displayName.isNotEmpty
+                            ? member.displayName
+                            : member.email,
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (isSelf)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 6),
+                        child: Text('(you)',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.onSurfaceVariant)),
+                      ),
+                  ],
+                ),
+                Text(
+                  member.isAdmin ? 'Homeowner' : 'Family member',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: member.isAdmin
+                          ? AppColors.primary
+                          : AppColors.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          // Role menu — can't demote the last admin, or act on the wrong row.
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded,
+                color: AppColors.onSurfaceVariant),
+            onSelected: (v) async {
+              if (v == 'make_admin') {
+                await RoleService.setMemberRole(member.uid, 'admin');
+              } else if (v == 'make_family') {
+                await RoleService.setMemberRole(member.uid, 'family');
+              } else if (v == 'remove') {
+                await RoleService.removeMember(member.uid);
+              }
+            },
+            itemBuilder: (_) => [
+              if (!member.isAdmin)
+                const PopupMenuItem(
+                    value: 'make_admin', child: Text('Make Homeowner')),
+              if (member.isAdmin && !isLastAdmin)
+                const PopupMenuItem(
+                    value: 'make_family',
+                    child: Text('Change to Family')),
+              if (!isSelf)
+                const PopupMenuItem(
+                    value: 'remove',
+                    child: Text('Remove access',
+                        style: TextStyle(color: AppColors.error))),
+            ],
+          ),
+        ],
       ),
     );
   }

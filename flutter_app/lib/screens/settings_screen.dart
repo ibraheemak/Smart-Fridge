@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/fridge_service.dart';
 import '../services/icon_generator_service.dart';
+import '../services/role_service.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import 'analytics_screen.dart';
@@ -33,6 +34,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final user = AuthService.currentUser;
     final name = AuthService.displayName;
+    // Alert thresholds and icon regeneration are Homeowner-only.
+    final isAdmin = RoleService.isAdmin;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -59,12 +62,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                   const SizedBox(height: 20),
 
-                  // Alert preferences — these drive the in-app alert logic
+                  // Alert preferences — Homeowner-only; drive the alert logic
                   _SettingsSection(
                     title: 'Alert Preferences',
                     icon: Icons.notifications_active_rounded,
                     iconColor: AppColors.primary,
                     children: [
+                      if (!isAdmin)
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(16, 10, 16, 0),
+                          child: Row(
+                            children: [
+                              Icon(Icons.lock_outline_rounded,
+                                  size: 14,
+                                  color: AppColors.onSurfaceVariant),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                    'Only the Homeowner can change these.',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: AppColors.onSurfaceVariant)),
+                              ),
+                            ],
+                          ),
+                        ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                         child: Row(
@@ -103,14 +125,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           divisions: 10,
                           activeColor: AppColors.primary,
                           inactiveColor: AppColors.outlineVariant,
-                          onChanged: (r) {
-                            setState(() {
-                              _minTemp = r.start;
-                              _maxTemp = r.end;
-                            });
-                            SettingsService.setMinTemp(r.start);
-                            SettingsService.setMaxTemp(r.end);
-                          },
+                          onChanged: isAdmin
+                              ? (r) {
+                                  setState(() {
+                                    _minTemp = r.start;
+                                    _maxTemp = r.end;
+                                  });
+                                  SettingsService.setMinTemp(r.start);
+                                  SettingsService.setMaxTemp(r.end);
+                                }
+                              : null,
                         ),
                       ),
                       Padding(
@@ -137,7 +161,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               children: [
                                 _StepButton(
                                   icon: Icons.remove,
-                                  onTap: _expiryDays > 1
+                                  onTap: isAdmin && _expiryDays > 1
                                       ? () {
                                           setState(() => _expiryDays--);
                                           SettingsService
@@ -155,7 +179,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                                 _StepButton(
                                   icon: Icons.add,
-                                  onTap: _expiryDays < 7
+                                  onTap: isAdmin && _expiryDays < 7
                                       ? () {
                                           setState(() => _expiryDays++);
                                           SettingsService
@@ -215,10 +239,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ],
                         ),
                       ),
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-                        child: _RegenerateIconsButton(),
-                      ),
+                      if (isAdmin)
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                          child: _RegenerateIconsButton(),
+                        ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                         child: SizedBox(

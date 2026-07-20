@@ -335,6 +335,30 @@ class _ItemActionsSheetState extends State<_ItemActionsSheet> {
     if (mounted) Navigator.pop(context);
   }
 
+  Future<void> _pickExpiry() async {
+    final now = DateTime.now();
+    final initial = widget.item.nextExpiry ?? now.add(const Duration(days: 7));
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial.isBefore(now) ? now : initial,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 3),
+    );
+    if (picked == null) return;
+    final iso = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-'
+        '${picked.day.toString().padLeft(2, '0')}';
+    setState(() => _busy = true);
+    await FridgeService.setItemExpiry(widget.item.name, iso);
+    if (!mounted) return;
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Expiry for ${widget.item.displayName} set to $iso'),
+        backgroundColor: AppColors.secondary,
+      ),
+    );
+  }
+
   Future<void> _remove() async {
     setState(() => _busy = true);
     await FridgeService.removeInventoryItem(widget.item.name);
@@ -426,7 +450,40 @@ class _ItemActionsSheetState extends State<_ItemActionsSheet> {
                 ),
               ],
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 8),
+
+            // Expiry date
+            InkWell(
+              onTap: _busy ? null : _pickExpiry,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.event_rounded,
+                        size: 20, color: AppColors.primary),
+                    const SizedBox(width: 12),
+                    const Text('Expiry date',
+                        style: TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w600)),
+                    const Spacer(),
+                    Text(
+                      widget.item.nextExpiry != null
+                          ? widget.item.expiryLabel
+                          : 'Set date',
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.chevron_right_rounded,
+                        size: 20, color: AppColors.onSurfaceVariant),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
 
             // Save quantity (only when changed)
             if (changed)

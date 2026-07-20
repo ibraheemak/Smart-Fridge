@@ -200,6 +200,39 @@ class FridgeService {
     unawaited(_bumpInventoryDoorbell());
   }
 
+  /// Set an item's expiry date ("YYYY-MM-DD"). Fills the first empty expiry
+  /// slot (the placeholder the firmware creates per unit); if every slot is
+  /// already dated, replaces the latest one. Grows the array to at least one
+  /// slot for items that had none.
+  static Future<void> setItemExpiry(String name, String date) async {
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(_currentRef);
+      final data = snap.data();
+      if (data == null) return;
+      final items = List<Map<String, dynamic>>.from(
+          (data['items'] as List<dynamic>? ?? [])
+              .map((e) => Map<String, dynamic>.from(e as Map)));
+      for (final e in items) {
+        if (!_nameEq(e['name'], name)) continue;
+        final expiries =
+            (e['expiries'] as List<dynamic>? ?? []).whereType<String>().toList();
+        final emptyIdx = expiries.indexWhere((s) => s.isEmpty);
+        if (emptyIdx >= 0) {
+          expiries[emptyIdx] = date;
+        } else if (expiries.isEmpty) {
+          expiries.add(date);
+        } else {
+          expiries.sort();
+          expiries[expiries.length - 1] = date; // replace the latest date
+        }
+        e['expiries'] = expiries;
+        break;
+      }
+      tx.update(_currentRef, {'items': items});
+    });
+    unawaited(_bumpInventoryDoorbell());
+  }
+
   /// Ring the RTDB "inventory changed" doorbell the CH board listens on.
   static Future<void> _bumpInventoryDoorbell() async {
     try {
