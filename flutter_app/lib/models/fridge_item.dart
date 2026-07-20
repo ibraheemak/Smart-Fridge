@@ -27,14 +27,12 @@ class FridgeItem {
   final String quantity;
   final String confidence;
   final List<String> expiries; // "YYYY-MM-DD" strings set by CH touch UI
-  final String barcode; // EAN from the GM65 scan ("" if not barcode-added)
 
   const FridgeItem({
     required this.name,
     required this.quantity,
     required this.confidence,
     this.expiries = const [],
-    this.barcode = '',
   });
 
   factory FridgeItem.fromMap(Map<String, dynamic> map) {
@@ -44,7 +42,6 @@ class FridgeItem {
       quantity: map['quantity'] as String? ?? '',
       confidence: _normalizeConfidence(map['confidence']),
       expiries: rawExpiries.whereType<String>().toList(),
-      barcode: (map['barcode'] as String? ?? '').trim(),
     );
   }
 

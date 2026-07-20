@@ -397,7 +397,7 @@ class _ItemActionsSheetState extends State<_ItemActionsSheet> {
             // Header
             Row(
               children: [
-                ItemIcon(itemName: widget.item.name, barcode: widget.item.barcode, size: 48),
+                ItemIcon(itemName: widget.item.name, size: 48),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -598,7 +598,6 @@ class _InventoryCard extends StatelessWidget {
               child: LayoutBuilder(
                 builder: (_, constraints) => ItemIcon(
                   itemName: item.name,
-                  barcode: item.barcode,
                   size: constraints.maxWidth,
                   borderRadius: BorderRadius.circular(12),
                 ),
