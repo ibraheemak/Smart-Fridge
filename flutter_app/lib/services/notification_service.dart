@@ -2,7 +2,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 import '../models/fridge_item.dart';
-import 'settings_service.dart';
+import 'fridge_settings_service.dart';
 
 /// On-device notifications for the three alert stories:
 ///  - Expiry (US #6): OS-scheduled, so they fire even when the app is closed.
@@ -81,7 +81,10 @@ class NotificationService {
       }
     }
 
-    final warningDays = SettingsService.getExpiryWarningDays();
+    // Honor the shared expiry-alert toggle from the fridge settings.
+    if (!FridgeSettingsService.cached.expiryAlertOn) return;
+
+    final warningDays = FridgeSettingsService.cached.expiryWarnDays;
     final now = tz.TZDateTime.now(tz.local);
     var idx = 0;
     for (final item in items) {

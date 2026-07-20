@@ -2,7 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
-import '../services/settings_service.dart';
+import '../services/fridge_settings_service.dart';
 import '../theme/app_theme.dart';
 
 class TemperatureScreen extends StatefulWidget {
@@ -137,8 +137,8 @@ class _TemperatureScreenState extends State<TemperatureScreen> {
                               ? 'No sensor data yet. The DHT11 on the CAM board will push readings automatically.'
                               : isAlert
                                   ? 'Temperature out of safe range '
-                                      '(${SettingsService.getMinTemp().round()}–'
-                                      '${SettingsService.getMaxTemp().round()}°C)! '
+                                      '(${FridgeSettingsService.cached.tempMin}–'
+                                      '${FridgeSettingsService.cached.tempMax}°C)! '
                                       'Check door seal or compressor.'
                                   : 'Optimal temperature. Your food is stored safely.',
                           style: TextStyle(

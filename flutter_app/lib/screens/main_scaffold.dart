@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/fridge_item.dart';
 import '../services/fridge_service.dart';
+import '../services/fridge_settings_service.dart';
 import '../services/notification_service.dart';
 import 'home_screen.dart';
 import 'inventory_screen.dart';
@@ -25,37 +26,42 @@ class _MainScaffoldState extends State<MainScaffold> {
   late final StreamSubscription<DoorStatus?> _doorSub;
   Timer? _doorOpenTimer;
 
-  // Fire the door alert if it stays open this long (matches the CH buzzer).
-  static const _doorOpenAlert = Duration(seconds: 30);
-
   @override
   void initState() {
     super.initState();
+
+    // Keep the shared fridge settings (thresholds + alert toggles) mirrored
+    // from the fridge screen via RTDB.
+    FridgeSettingsService.init();
 
     // Expiry (#6): reschedule OS notifications on every inventory change.
     _invSub = FridgeService.inventoryStream().listen((inv) {
       NotificationService.scheduleExpiryAlerts(inv?.items ?? const []);
     });
 
-    // Temperature (#9): notify on breach, reset when it recovers.
+    // Temperature (#9): notify on breach — if env alerts are enabled.
     _tempSub = FridgeService.temperatureStream().listen((t) {
       if (t == null) return;
-      if (t.isAlert && t.temperatureC != null) {
+      if (t.isAlert &&
+          t.temperatureC != null &&
+          FridgeSettingsService.cached.envAlertOn) {
         NotificationService.notifyTemperature(t.temperatureC!);
       } else if (t.isOk) {
         NotificationService.clearTemperature();
       }
     });
 
-    // Door (#10): start a timer when it opens; alert if still open at the
-    // end. The doc only updates on state change, so we time it ourselves.
+    // Door (#10): buzz-delay and toggle come from the shared settings.
     _doorSub = FridgeService.doorStream().listen((d) {
       if (d == null) return;
-      if (d.isOpen) {
-        _doorOpenTimer ??= Timer(_doorOpenAlert, () {
-          NotificationService.notifyDoorOpen();
-          _doorOpenTimer = null;
-        });
+      if (d.isOpen && FridgeSettingsService.cached.doorAlertOn) {
+        _doorOpenTimer ??= Timer(
+          Duration(seconds: FridgeSettingsService.cached.doorAlertS),
+          () {
+            NotificationService.notifyDoorOpen();
+            _doorOpenTimer = null;
+          },
+        );
       } else {
         _doorOpenTimer?.cancel();
         _doorOpenTimer = null;
