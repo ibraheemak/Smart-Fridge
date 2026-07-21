@@ -62,7 +62,7 @@ class FridgeSettings {
     buzzerFreq: 2000,
     buzzerDurationS: 10,
     buzzerMelody: 0,
-    notifRetentionD: 30,
+    notifRetentionD: 7,   // matches firmware NOTIF_DEFAULT_RET_DAYS
     expiryWarnDays: 3,
     expiryAlertOn: true,
     expiredAlertOn: true,

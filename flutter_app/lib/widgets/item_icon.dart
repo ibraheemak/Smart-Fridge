@@ -69,9 +69,13 @@ class _ItemIconState extends State<ItemIcon> {
     try {
       final data =
           await rootBundle.load('assets/icons/$_assetKey.png');
+      final bytes = data.buffer.asUint8List();
+      // The fridge screen can only read Firebase Storage, so publish the
+      // bundled art once — otherwise common items stay blank on the TFT.
+      IconGeneratorService.ensureStorageIcon(widget.itemName, bytes);
       if (mounted) {
         setState(() {
-          _asset = data.buffer.asUint8List();
+          _asset = bytes;
           _assetChecked = true;
         });
       }

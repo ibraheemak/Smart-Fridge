@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/fridge_item.dart';
+import '../models/fridge_settings.dart';
 import '../services/fridge_service.dart';
 import '../services/fridge_settings_service.dart';
 import '../services/notification_service.dart';
@@ -24,7 +25,14 @@ class _MainScaffoldState extends State<MainScaffold> {
   late final StreamSubscription<InventorySnapshot?> _invSub;
   late final StreamSubscription<TemperatureReading?> _tempSub;
   late final StreamSubscription<DoorStatus?> _doorSub;
+  StreamSubscription<FridgeSettings?>? _settingsSub;
   Timer? _doorOpenTimer;
+
+  // Last inventory seen, so a settings change can re-time the expiry alerts
+  // without waiting for the inventory doc to change.
+  List<FridgeItem> _lastItems = const [];
+  int? _lastWarnDays;
+  bool? _lastExpiryOn;
 
   @override
   void initState() {
@@ -36,7 +44,23 @@ class _MainScaffoldState extends State<MainScaffold> {
 
     // Expiry (#6): reschedule OS notifications on every inventory change.
     _invSub = FridgeService.inventoryStream().listen((inv) {
-      NotificationService.scheduleExpiryAlerts(inv?.items ?? const []);
+      _lastItems = inv?.items ?? const [];
+      NotificationService.scheduleExpiryAlerts(_lastItems);
+    });
+
+    // …and whenever the expiry settings themselves change (from this app or
+    // the fridge screen). Without this, turning expiry alerts off or changing
+    // the warn-days left the already-queued OS notifications firing at the old
+    // schedule until the inventory happened to change. scheduleExpiryAlerts
+    // cancels its whole ID range first, so re-running it is idempotent.
+    _settingsSub = FridgeSettingsService.stream().listen((s) {
+      if (s == null) return;
+      if (s.expiryWarnDays != _lastWarnDays ||
+          s.expiryAlertOn != _lastExpiryOn) {
+        _lastWarnDays = s.expiryWarnDays;
+        _lastExpiryOn = s.expiryAlertOn;
+        NotificationService.scheduleExpiryAlerts(_lastItems);
+      }
     });
 
     // Temperature (#9): notify on breach — if env alerts are enabled.
@@ -58,7 +82,11 @@ class _MainScaffoldState extends State<MainScaffold> {
         _doorOpenTimer ??= Timer(
           Duration(seconds: FridgeSettingsService.cached.doorAlertS),
           () {
-            NotificationService.notifyDoorOpen();
+            // Re-check: the manager may have switched door alerts off while
+            // the timer was already running.
+            if (FridgeSettingsService.cached.doorAlertOn) {
+              NotificationService.notifyDoorOpen();
+            }
             _doorOpenTimer = null;
           },
         );
@@ -75,6 +103,7 @@ class _MainScaffoldState extends State<MainScaffold> {
     _invSub.cancel();
     _tempSub.cancel();
     _doorSub.cancel();
+    _settingsSub?.cancel();
     _doorOpenTimer?.cancel();
     super.dispose();
   }
