@@ -144,6 +144,37 @@ class IconGeneratorService {
     return null;
   }
 
+  // Items we've already checked/published this session.
+  static final _ensured = <String>{};
+
+  /// Publish a bundled asset to Storage if that item has no icon object yet.
+  ///
+  /// The app can render a bundled asset locally, but the CH display board only
+  /// reads Firebase Storage — so without this, the ~20 most common items
+  /// (milk, cheese, eggs, bread, …) would show in the app and stay blank on
+  /// the fridge screen forever. Costs no AI call: it just normalizes the
+  /// bundled bytes to the icon spec and uploads them once.
+  static Future<void> ensureStorageIcon(
+      String itemName, Uint8List assetBytes) async {
+    final key = _key(itemName);
+    if (!_ensured.add(key)) return; // already handled this session
+    try {
+      final ref = _storage.ref('icons/$key.jpg');
+      try {
+        await ref.getMetadata();
+        return; // already published
+      } catch (_) {
+        // Not found — fall through and upload.
+      }
+      final icon = toFridgeIcon(assetBytes);
+      if (icon != null) {
+        await ref.putData(icon, SettableMetadata(contentType: 'image/jpeg'));
+      }
+    } catch (_) {
+      // Non-fatal: the app still shows the bundled asset.
+    }
+  }
+
   /// Uploads the normalized icon to icons/{key}.jpg (baseline JPEG) in
   /// Firebase Storage — the exact object the ESP32 CH board fetches and every
   /// app instance loads via CachedNetworkImage.

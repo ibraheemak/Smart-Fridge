@@ -20,6 +20,11 @@ class _FridgeSettingsScreenState extends State<FridgeSettingsScreen> {
   Timer? _writeTimer;
   bool _localDirty = false; // suppress adopting remote while the user edits
 
+  /// True once the real RTDB copy has arrived. Until then the controls are
+  /// disabled: editing a defaults-seeded object would write those defaults
+  /// over the fridge's actual settings.
+  bool _loaded = false;
+
   @override
   void initState() {
     super.initState();
@@ -27,8 +32,11 @@ class _FridgeSettingsScreenState extends State<FridgeSettingsScreen> {
     _sub = FridgeSettingsService.stream().listen((remote) {
       // Don't clobber an in-progress local edit; adopt screen-side changes
       // (and our own echoes) once settled.
-      if (remote != null && !_localDirty && mounted) {
-        setState(() => _s = remote);
+      if (remote != null && mounted) {
+        setState(() {
+          _loaded = true;
+          if (!_localDirty) _s = remote;
+        });
       }
     });
   }
@@ -36,7 +44,15 @@ class _FridgeSettingsScreenState extends State<FridgeSettingsScreen> {
   @override
   void dispose() {
     _sub?.cancel();
-    _writeTimer?.cancel();
+    // Flush a still-pending edit instead of dropping it. Leaving the screen
+    // within the debounce window (tap "+" then immediately back) would
+    // otherwise discard the change silently. Fire-and-forget: the write is a
+    // static service call and doesn't need this widget alive.
+    if (_writeTimer?.isActive ?? false) {
+      _writeTimer!.cancel();
+      final pending = _s;
+      if (pending != null) FridgeSettingsService.write(pending);
+    }
     super.dispose();
   }
 
@@ -49,8 +65,13 @@ class _FridgeSettingsScreenState extends State<FridgeSettingsScreen> {
     _writeTimer?.cancel();
     _writeTimer = Timer(const Duration(milliseconds: 450), () async {
       final snapshot = _s;
-      if (snapshot != null) await FridgeSettingsService.write(snapshot);
-      _localDirty = false;
+      try {
+        if (snapshot != null) await FridgeSettingsService.write(snapshot);
+      } finally {
+        // Always clear, even if the write threw — otherwise _localDirty stays
+        // true forever and the screen stops accepting fridge-screen updates.
+        _localDirty = false;
+      }
     });
   }
 
@@ -73,7 +94,12 @@ class _FridgeSettingsScreenState extends State<FridgeSettingsScreen> {
                 fontSize: 20,
                 fontWeight: FontWeight.w700)),
       ),
-      body: ListView(
+      // Wait for the real settings before showing editable controls — see
+      // _loaded. Otherwise a quick tap could write defaults over them.
+      body: !_loaded
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.primary))
+          : ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
           Container(
