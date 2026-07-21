@@ -227,7 +227,7 @@ bool fetchRecipesFromGemini(const String& prompt) {
   String url = String(GEMINI_API_ENDPOINT) + "?key=" + GEMINI_API_KEY;
 
   WiFiClientSecure client;
-  client.setInsecure();
+  prepSecureClient(client);
   HTTPClient http;
   http.setTimeout(GEMINI_RECIPES_TIMEOUT_MS);
   if (!http.begin(client, url)) { g_recipes_status = "Request failed"; return false; }
@@ -265,7 +265,7 @@ bool fetchRecipesFromGPT(const String& prompt) {
   serializeJson(reqDoc, body);
 
   WiFiClientSecure client;
-  client.setInsecure();
+  prepSecureClient(client);
   HTTPClient http;
   http.setTimeout(OPENAI_RECIPES_TIMEOUT_MS);
   if (!http.begin(client, OPENAI_API_ENDPOINT)) { g_recipes_status = "Request failed"; return false; }

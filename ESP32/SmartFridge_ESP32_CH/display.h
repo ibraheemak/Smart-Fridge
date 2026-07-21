@@ -308,7 +308,7 @@ bool fetchIconJpeg(const String& item_name, uint8_t** out_buf, size_t* out_len) 
   Serial.printf("[ICON] GET %s\n", url.c_str());
 
   WiFiClientSecure client;
-  client.setInsecure();
+  prepSecureClient(client);
   HTTPClient http;
   http.setTimeout(8000);
   if (!http.begin(client, url)) return false;
@@ -688,7 +688,8 @@ struct ListLayout {
 ListLayout computeListLayout() {
   ListLayout l;
   l.top    = HEADER_HEIGHT_PX + 4;
-  l.bottom = tft.height() - FOOTER_HEIGHT_PX - 4;
+  l.bottom = tft.height() - FOOTER_HEIGHT_PX;  // no bottom padding: the last
+                                                // 4px go to the down button
 
   int remaining = max(0, g_item_count - g_list_scroll);
 

@@ -277,7 +277,7 @@ String lookupProductName(const String& barcode) {
                   (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
 
     WiFiClientSecure client;
-    client.setInsecure();
+    prepSecureClient(client);
     HTTPClient http;
     http.setTimeout(10000);
     if (!http.begin(client, url)) {
@@ -390,7 +390,7 @@ bool saveBoughtItem(const String& item_name) {
   int prev_count = 0;
   {
     WiFiClientSecure client;
-    client.setInsecure();
+    prepSecureClient(client);
     HTTPClient http;
     http.setTimeout(10000);
     if (http.begin(client, url)) {
@@ -416,7 +416,7 @@ bool saveBoughtItem(const String& item_name) {
   Serial.printf("[GM65][BOUGHT] PATCH payload: %s\n", payload.c_str());
 
   WiFiClientSecure client;
-  client.setInsecure();
+  prepSecureClient(client);
   HTTPClient http;
   http.setTimeout(10000);
   if (!http.begin(client, url + mask)) return false;
@@ -450,7 +450,7 @@ bool addScannedItemToInventory(const String& item_name) {
   bool has_existing = false;
   {
     WiFiClientSecure client;
-    client.setInsecure();
+    prepSecureClient(client);
     HTTPClient http;
     http.setTimeout(10000);
     if (http.begin(client, url)) {
@@ -533,7 +533,7 @@ bool addScannedItemToInventory(const String& item_name) {
   Serial.printf("[GM65][INV] PATCH payload: %s\n", payload.c_str());
 
   WiFiClientSecure client;
-  client.setInsecure();
+  prepSecureClient(client);
   HTTPClient http;
   http.setTimeout(10000);
   if (!http.begin(client, url)) {

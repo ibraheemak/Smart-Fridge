@@ -53,7 +53,7 @@ bool mergeRoofInventories() {
       "/inventory/roof" + String(roof) + "?key=" + String(FIREBASE_API_KEY);
 
     WiFiClientSecure client;
-    client.setInsecure();
+    prepSecureClient(client);
     HTTPClient http;
     http.setTimeout(10000);
     if (!http.begin(client, url)) continue;
@@ -101,7 +101,7 @@ bool mergeRoofInventories() {
   bool has_existing = false;
   {
     WiFiClientSecure client;
-    client.setInsecure();
+    prepSecureClient(client);
     HTTPClient http;
     http.setTimeout(10000);
     if (http.begin(client, cur_url)) {
@@ -187,7 +187,7 @@ bool mergeRoofInventories() {
   String payload;
   serializeJson(out_doc, payload);
   WiFiClientSecure client;
-  client.setInsecure();
+  prepSecureClient(client);
   HTTPClient http;
   http.setTimeout(10000);
   if (!http.begin(client, cur_url)) return false;
@@ -225,7 +225,7 @@ bool decrementItemInRoofs(const String& name) {
     bool loaded = false;
     {
       WiFiClientSecure client;
-      client.setInsecure();
+      prepSecureClient(client);
       HTTPClient http;
       http.setTimeout(10000);
       if (!http.begin(client, url)) continue;
@@ -273,7 +273,7 @@ bool decrementItemInRoofs(const String& name) {
     String payload;
     serializeJson(out, payload);
     WiFiClientSecure client;
-    client.setInsecure();
+    prepSecureClient(client);
     HTTPClient http;
     http.setTimeout(10000);
     if (!http.begin(client, url)) return false;

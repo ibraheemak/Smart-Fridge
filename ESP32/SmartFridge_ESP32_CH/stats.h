@@ -58,7 +58,7 @@ bool fetchBoughtStats() {
                "?key=" + String(FIREBASE_API_KEY);
 
   WiFiClientSecure client;
-  client.setInsecure();
+  prepSecureClient(client);
   HTTPClient http;
   http.setTimeout(10000);
   if (!http.begin(client, url)) return false;

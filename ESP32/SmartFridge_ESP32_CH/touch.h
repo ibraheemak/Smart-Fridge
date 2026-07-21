@@ -563,7 +563,7 @@ void persistItemsToFirestore() {
   serializeJson(doc, body);
 
   WiFiClientSecure client;
-  client.setInsecure();
+  prepSecureClient(client);
   HTTPClient http;
   http.setTimeout(10000);
   if (http.begin(client, url)) {

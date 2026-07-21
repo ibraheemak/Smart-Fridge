@@ -124,6 +124,27 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
 #define GM65_SCAN_TIMEOUT_MS 10000   // give up waiting for a read after this long (module's own single-read timeout is 5s, see gm65.h)
 
 // ----------------------------------------------------------------------------
+// HTTPS CLIENT TIMEOUTS
+// ----------------------------------------------------------------------------
+#include <WiFiClientSecure.h>
+// Every blocking HTTPS call in this sketch runs inline in loop(), so while one
+// is in flight handleTouch() is not being called and taps are simply not
+// sampled — the screen looks dead. HTTPClient::setTimeout() does NOT help
+// here: it bounds *reads* only. The TCP connect and the TLS handshake are
+// governed by these two WiFiClientSecure settings, whose defaults are 30s and
+// 120s. One unreachable host was therefore enough to freeze the UI for
+// tens of seconds — and past WATCHDOG_TIMEOUT_S (25s) to reboot the board
+// outright. rtdb_stream.h has always capped its own client this way; use
+// prepSecureClient() everywhere else so every call site gets the same bound.
+#define NET_CONNECT_TIMEOUT_MS   5000
+#define NET_HANDSHAKE_TIMEOUT_S     5
+inline void prepSecureClient(WiFiClientSecure& c) {
+  c.setInsecure();
+  c.setConnectionTimeout(NET_CONNECT_TIMEOUT_MS);
+  c.setHandshakeTimeout(NET_HANDSHAKE_TIMEOUT_S);
+}
+
+// ----------------------------------------------------------------------------
 // TIMEZONE
 // ----------------------------------------------------------------------------
 #define TIMEZONE "IST-2IDT,M3.4.4/26,M10.5.0"
@@ -132,11 +153,16 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
 // LIST RENDERING
 // ----------------------------------------------------------------------------
 #define HEADER_HEIGHT_PX    40
-#define FOOTER_HEIGHT_PX    24
-// 58px so 3 rows + both (now taller) up/down scroll buttons still fit the
-// 248px list area (44..292 in the 480x320 landscape panel): 3*58 + 2*36 = 246.
-// Row body is ROW_HEIGHT_PX - ROW_GAP_PX = 52px, still clear of the 48px icon.
-#define ROW_HEIGHT_PX       58
+#define FOOTER_HEIGHT_PX    12   // slim: it only holds one size-1 "Updated ..."
+                                  // line. The 12px reclaimed here (plus the 4px
+                                  // bottom padding) is what pays for the taller
+                                  // SCROLL_ARROW_H without touching ROW_HEIGHT_PX.
+// 64px so 3 rows + both up/down scroll buttons still fit the 264px list
+// area (44..308 in the 480x320 landscape panel): 3*64 + 2*36 = 264. The
+// taller scroll buttons were paid for by the slimmer footer above, NOT by
+// shrinking rows — row geometry must stay put or every row's tap zone
+// (and the right-edge "open details" arrow) shifts under the user.
+#define ROW_HEIGHT_PX       64
 #define ROW_GAP_PX           6   // visual gap between item rows
 #define ROW_TAP_DEADZONE_PX  2   // touch dead zone near row borders (keep small — a
                                   // larger value rejects taps across most of the row
@@ -150,7 +176,8 @@ static uint8_t CAM_MAC_ADDRS[NUM_ROOFS][6] = {
 #define MAX_ITEMS_DISPLAYED  32
 #define SCROLL_ARROW_H       36  // height of the tappable up/down scroll-button strips
                                   // (was 28 — too small a target on the resistive panel;
-                                  // ROW_HEIGHT_PX shrank to 58 to keep 3 rows visible)
+                                  // the extra 16px total came out of the footer, see
+                                  // FOOTER_HEIGHT_PX, so rows keep their 64px geometry)
 #define SCROLL_ARROW_BOX_W   96  // width of the rounded button drawn inside each strip
                                   // (rest of the strip is blank but still tappable, for
                                   // a bigger/more forgiving touch target)

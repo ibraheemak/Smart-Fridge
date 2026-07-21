@@ -44,7 +44,8 @@
 #include "parameters.h"
 #include "SECRETS.h"
 
-#define SETSYNC_POLL_MS  5000   // how often to check RTDB for an app-side change
+#define SETSYNC_POLL_MS  15000  // how often to check RTDB for an app-side change
+#define SETSYNC_TOUCH_QUIET_MS 4000  // ...but never while the user is tapping, see below
 
 static unsigned long g_set_last_poll_ms = 0;
 static String        g_set_last_applied;  // last body we applied/pushed, to skip no-op polls
@@ -93,7 +94,7 @@ void pushSettingsToRTDB() {
 
   for (int attempt = 1; attempt <= 3; attempt++) {
     WiFiClientSecure client;
-    client.setInsecure();
+    prepSecureClient(client);
     HTTPClient http;
     http.setTimeout(5000);
     if (http.begin(client, url)) {
@@ -179,7 +180,7 @@ bool fetchSettingsFromRTDB(String& out) {
                "/fridges/" + String(FRIDGE_ID) + "/settings.json";
 
   WiFiClientSecure client;
-  client.setInsecure();
+  prepSecureClient(client);
   HTTPClient http;
   http.setTimeout(5000);
   if (!http.begin(client, url)) return false;
@@ -223,6 +224,18 @@ void initSettingsSync() {
 // ----------------------------------------------------------------------------
 void settingsSyncPoll() {
   if (millis() - g_set_last_poll_ms < SETSYNC_POLL_MS) return;
+
+  // fetchSettingsFromRTDB() is a blocking HTTPS GET (fresh TLS handshake) —
+  // loop() doesn't reach handleTouch() for as long as it runs, so a tap that
+  // lands inside that window is simply never sampled. On a screen the user is
+  // actively poking at, that reads as "the buttons randomly don't work".
+  // Hold the poll off while taps are still coming in; settings changes are
+  // human-driven and infrequent, so a few extra seconds of latency costs
+  // nothing. Don't stamp g_set_last_poll_ms here — otherwise each deferral
+  // would restart the interval and a steady stream of taps could starve the
+  // sync entirely.
+  if (millis() - g_last_touch_ms < SETSYNC_TOUCH_QUIET_MS) return;
+
   g_set_last_poll_ms = millis();
 
   String body;

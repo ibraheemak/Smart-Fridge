@@ -35,7 +35,7 @@ inline void rtdbNotifyInventoryChanged() {
 
   for (int attempt = 1; attempt <= RTDB_NOTIFY_MAX_ATTEMPTS; attempt++) {
     WiFiClientSecure client;
-    client.setInsecure();
+    prepSecureClient(client);
     HTTPClient http;
     http.setTimeout(5000);
     if (!http.begin(client, url)) {
