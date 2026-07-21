@@ -71,15 +71,15 @@ The system is split across two ESP32 boards that talk to each other over ESP-NOW
 ## Arduino/ESP32 libraries used in this project
 
 **Display / controller board (SmartFridge_ESP32_CH):**
-* WiFiManager (tzapu)
-* ArduinoJson (bblanchon)
-* TFT_eSPI (Bodmer)
-* TJpg_Decoder (Bodmer)
+* WiFiManager (tzapu) — 2.0.17
+* ArduinoJson (bblanchon) — 7.4.3
+* TFT_eSPI (Bodmer) — 2.5.43
+* TJpg_Decoder (Bodmer) — 1.1.0
 
 **Camera board (SmartFridge_ESP32_CAM):**
-* WiFiManager (tzapu)
-* ArduinoJson (bblanchon)
-* FastLED
+* WiFiManager (tzapu) — 2.0.17
+* ArduinoJson (bblanchon) — 7.4.3
+* FastLED (Daniel Garcia) — 3.10.3
 * esp32-camera — bundled with the ESP32 Arduino board package
 
 *(The DHT11 is read with hand-written bit-banged timing, so no external DHT library is required.)*
