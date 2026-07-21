@@ -735,8 +735,8 @@ void drawScrollArrow(int y, bool pointingUp) {
   tft.drawFastHLine(bx + 8, by + 2, boxW - 16, 0x4A69);  // subtle top highlight
 
   int cx = bx + boxW / 2, cy = by + boxH / 2;
-  if (pointingUp) tft.fillTriangle(cx - 8, cy + 5, cx + 8, cy + 5, cx, cy - 6, TFT_WHITE);
-  else             tft.fillTriangle(cx - 8, cy - 5, cx + 8, cy - 5, cx, cy + 6, TFT_WHITE);
+  if (pointingUp) tft.fillTriangle(cx - 12, cy + 7, cx + 12, cy + 7, cx, cy - 8, TFT_WHITE);
+  else             tft.fillTriangle(cx - 12, cy - 7, cx + 12, cy - 7, cx, cy + 8, TFT_WHITE);
 }
 
 void drawItemRow(int index, int y) {

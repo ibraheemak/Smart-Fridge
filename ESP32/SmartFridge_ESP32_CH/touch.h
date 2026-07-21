@@ -832,7 +832,10 @@ void handleTouch() {
       renderInventory();
       return;
     }
-    if (l.show_down && ty >= l.down_y && ty < l.down_y + SCROLL_ARROW_H) {
+    // Down strip runs to the bottom of the list area, not just its drawn
+    // height — the few leftover pixels above the footer belong to nothing
+    // else, so counting them makes the button that bit easier to hit.
+    if (l.show_down && ty >= l.down_y) {
       // No "backfill to a full last page" clamp here on purpose — show_down
       // only appears when more than a full page remains, so stepping forward
       // by page_step always lands on unseen items; clamping to
