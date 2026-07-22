@@ -73,6 +73,11 @@ void handleAlertTouch(int x, int y);
 void openBuzzerScreen();
 void handleBuzzerTouch(int x, int y);
 
+// Defined in wifi_setup.h — Settings > WiFi: per-board config-portal launcher.
+void openWifiScreen();
+void handleWifiTouch(int x, int y);
+void handleWifiInfoTouch(int x, int y);
+
 // Defined in liveview.h — placeholder Live View screen (teammate to implement).
 void openLiveViewScreen();
 void handleLiveViewTouch(int x, int y);
@@ -107,7 +112,7 @@ extern int g_recipe_detail_index;
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
-enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_BUZZER, VIEW_ALERT, VIEW_LIVE, VIEW_NOTIFICATIONS, VIEW_NOTIF_SETTINGS, VIEW_RECIPES, VIEW_RECIPE_DETAIL };
+enum ViewState { VIEW_HOME, VIEW_LIST, VIEW_DETAIL, VIEW_NEW_ITEM, VIEW_STATS, VIEW_SCAN, VIEW_SETTINGS, VIEW_BUZZER, VIEW_ALERT, VIEW_LIVE, VIEW_NOTIFICATIONS, VIEW_NOTIF_SETTINGS, VIEW_RECIPES, VIEW_RECIPE_DETAIL, VIEW_WIFI, VIEW_WIFI_INFO };
 
 ViewState     g_view          = VIEW_HOME;
 int           g_detail_index  = -1;
@@ -707,6 +712,10 @@ void handleTouch() {
 
   // VIEW_BUZZER — buzzer volume/pitch/duration/melody sub-screen.
   if (g_view == VIEW_BUZZER)   { handleBuzzerTouch(tx, ty); return; }
+
+  // VIEW_WIFI / VIEW_WIFI_INFO — per-board WiFi config-portal launcher.
+  if (g_view == VIEW_WIFI)      { handleWifiTouch(tx, ty); return; }
+  if (g_view == VIEW_WIFI_INFO) { handleWifiInfoTouch(tx, ty); return; }
 
   // VIEW_LIVE — placeholder Live View screen ("< Back" only for now).
   if (g_view == VIEW_LIVE)     { handleLiveViewTouch(tx, ty); return; }

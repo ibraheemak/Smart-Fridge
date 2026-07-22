@@ -17,6 +17,7 @@
 
 static volatile bool g_espnow_scan_trigger_pending = false;
 static volatile bool g_espnow_liveview_pending     = false;
+static volatile bool g_espnow_wifi_portal_pending  = false;
 
 void onEspNowDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len == (int)strlen("SCAN_TRIGGER") && memcmp(data, "SCAN_TRIGGER", len) == 0) {
@@ -25,6 +26,13 @@ void onEspNowDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int 
   }
   if (len == (int)strlen("LIVE_CAPTURE") && memcmp(data, "LIVE_CAPTURE", len) == 0) {
     g_espnow_liveview_pending = true;
+    return;
+  }
+  // "Open your WiFi config portal" — sent from the CH board's Settings > WiFi
+  // screen. Handled from loop() (reboot into the portal, see wifi_portal.h),
+  // never here on the WiFi/LWIP task.
+  if (len == (int)strlen("WIFI_PORTAL") && memcmp(data, "WIFI_PORTAL", len) == 0) {
+    g_espnow_wifi_portal_pending = true;
   }
 }
 
@@ -75,6 +83,13 @@ bool espnowScanTriggerReceived() {
 bool espnowLiveViewRequested() {
   if (!g_espnow_liveview_pending) return false;
   g_espnow_liveview_pending = false;
+  return true;
+}
+
+// Returns true exactly once when a WIFI_PORTAL command arrives.
+bool espnowWifiPortalRequested() {
+  if (!g_espnow_wifi_portal_pending) return false;
+  g_espnow_wifi_portal_pending = false;
   return true;
 }
 

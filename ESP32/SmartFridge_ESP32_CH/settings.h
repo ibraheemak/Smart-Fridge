@@ -8,10 +8,12 @@
 //   row 0  Buzzer      [Options >]  -> buzzer sub-screen (volume/pitch/...)
 //   row 1  Alerts      [Options >]  -> alert-settings sub-screen (VIEW_NOTIF_
 //                                      SETTINGS: expiry/new-item/retention)
-//   row 2  Door alert  [- + ]       -> g_door_open_alert_ms (seconds the door
+//   row 2  WiFi        [Change >]   -> per-board WiFi setup (VIEW_WIFI, see
+//                                      wifi_setup.h): display + each camera
+//   row 3  Door alert  [- + ]       -> g_door_open_alert_ms (seconds the door
 //                                      may stay open before the buzzer starts)
-//   rows 3-4  Temp min/max (C)      -> acceptable temperature range
-//   rows 5-6  Humidity min/max (%)  -> acceptable humidity range
+//   rows 4-5  Temp min/max (C)      -> acceptable temperature range
+//   rows 6-7  Humidity min/max (%)  -> acceptable humidity range
 //
 // If a temperature/humidity reading (pushed from the roof1 CAM over ESP-NOW,
 // see espnow_link.h) falls outside the configured range, a full-screen ALERT
@@ -46,6 +48,10 @@ void openNotifSettingsScreen();
 // them. Defined in settings_sync.h (included after this file); declared here so
 // the Settings/Buzzer Back handlers can push right after they persist to NVS.
 void pushSettingsToRTDB();
+// Opens the WiFi sub-screen (VIEW_WIFI) — lets the user push this display or
+// any camera into its WiFi config portal. Defined in wifi_setup.h, which is
+// included after this file (it reuses the row metrics defined below).
+void openWifiScreen();
 
 // ----------------------------------------------------------------------------
 // Persisted settings
@@ -216,9 +222,13 @@ void handleAlertTouch(int x, int y) {
 // ----------------------------------------------------------------------------
 // Settings screen layout
 // ----------------------------------------------------------------------------
-#define SET_ROW_H  39
+// 8 rows have to fit between the 40px header and the 320px screen bottom:
+// 40 + 6 + 7*34 + 2 + 30 = 316. Sized down from 39/36 when the WiFi row was
+// added — the buzzer sub-screen shares these metrics and has fewer rows, so it
+// just ends up with more slack at the bottom.
+#define SET_ROW_H  34
 #define SET_BTN_W  42
-#define SET_BTN_H  36
+#define SET_BTN_H  30
 #define SET_MINUS_X 250
 #define SET_PLUS_X  358
 #define SET_VAL_X0  292
@@ -228,6 +238,7 @@ static inline int setRowY(int i) { return HEADER_HEIGHT_PX + 6 + i * SET_ROW_H; 
 
 BtnRect btnSetBuzzer;
 BtnRect btnSetAlerts;            // row 1 "Options >" → alert-settings sub-screen
+BtnRect btnSetWifi;              // row 2 "Change >"  → WiFi sub-screen (wifi_setup.h)
 BtnRect btnDoorM, btnDoorP;
 BtnRect btnTMinM, btnTMinP, btnTMaxM, btnTMaxP;
 BtnRect btnHMinM, btnHMinP, btnHMaxM, btnHMaxP;
@@ -235,22 +246,23 @@ BtnRect btnHMinM, btnHMinP, btnHMaxM, btnHMaxP;
 void layoutSettings() {
   int y0 = setRowY(0) + 2, y1 = setRowY(1) + 2, y2 = setRowY(2) + 2;
   int y3 = setRowY(3) + 2, y4 = setRowY(4) + 2, y5 = setRowY(5) + 2;
-  int y6 = setRowY(6) + 2;
+  int y6 = setRowY(6) + 2, y7 = setRowY(7) + 2;
 
-  // Rows 0-1 are "category" rows that open a sub-screen; rows 2-6 are +/- values.
+  // Rows 0-2 are "category" rows that open a sub-screen; rows 3-7 are +/- values.
   btnSetBuzzer = {SET_MINUS_X, y0, 150, SET_BTN_H};
   btnSetAlerts = {SET_MINUS_X, y1, 150, SET_BTN_H};
+  btnSetWifi   = {SET_MINUS_X, y2, 150, SET_BTN_H};
 
-  btnDoorM = {SET_MINUS_X, y2, SET_BTN_W, SET_BTN_H};
-  btnDoorP = {SET_PLUS_X,  y2, SET_BTN_W, SET_BTN_H};
-  btnTMinM = {SET_MINUS_X, y3, SET_BTN_W, SET_BTN_H};
-  btnTMinP = {SET_PLUS_X,  y3, SET_BTN_W, SET_BTN_H};
-  btnTMaxM = {SET_MINUS_X, y4, SET_BTN_W, SET_BTN_H};
-  btnTMaxP = {SET_PLUS_X,  y4, SET_BTN_W, SET_BTN_H};
-  btnHMinM = {SET_MINUS_X, y5, SET_BTN_W, SET_BTN_H};
-  btnHMinP = {SET_PLUS_X,  y5, SET_BTN_W, SET_BTN_H};
-  btnHMaxM = {SET_MINUS_X, y6, SET_BTN_W, SET_BTN_H};
-  btnHMaxP = {SET_PLUS_X,  y6, SET_BTN_W, SET_BTN_H};
+  btnDoorM = {SET_MINUS_X, y3, SET_BTN_W, SET_BTN_H};
+  btnDoorP = {SET_PLUS_X,  y3, SET_BTN_W, SET_BTN_H};
+  btnTMinM = {SET_MINUS_X, y4, SET_BTN_W, SET_BTN_H};
+  btnTMinP = {SET_PLUS_X,  y4, SET_BTN_W, SET_BTN_H};
+  btnTMaxM = {SET_MINUS_X, y5, SET_BTN_W, SET_BTN_H};
+  btnTMaxP = {SET_PLUS_X,  y5, SET_BTN_W, SET_BTN_H};
+  btnHMinM = {SET_MINUS_X, y6, SET_BTN_W, SET_BTN_H};
+  btnHMinP = {SET_PLUS_X,  y6, SET_BTN_W, SET_BTN_H};
+  btnHMaxM = {SET_MINUS_X, y7, SET_BTN_W, SET_BTN_H};
+  btnHMaxP = {SET_PLUS_X,  y7, SET_BTN_W, SET_BTN_H};
 }
 
 void drawSetValue(int row, const String& s) {
@@ -265,11 +277,11 @@ void drawSetValue(int row, const String& s) {
 // Redraws only the mutable value fields — used after a +/- tap so the labels
 // and fixed buttons don't flash. (Rows 0-1's "Options" buttons are static.)
 void drawSettingsValues() {
-  drawSetValue(2, String(g_settings.door_alert_s) + "s");
-  drawSetValue(3, String(g_settings.temp_min) + "C");
-  drawSetValue(4, String(g_settings.temp_max) + "C");
-  drawSetValue(5, String(g_settings.hum_min) + "%");
-  drawSetValue(6, String(g_settings.hum_max) + "%");
+  drawSetValue(3, String(g_settings.door_alert_s) + "s");
+  drawSetValue(4, String(g_settings.temp_min) + "C");
+  drawSetValue(5, String(g_settings.temp_max) + "C");
+  drawSetValue(6, String(g_settings.hum_min) + "%");
+  drawSetValue(7, String(g_settings.hum_max) + "%");
 }
 
 void renderSettingsScreen() {
@@ -288,19 +300,20 @@ void renderSettingsScreen() {
 
   layoutSettings();
 
-  const char* labels[7] = {
-    "Buzzer", "Alerts", "Door alert", "Temp min", "Temp max", "Humidity min", "Humidity max"
+  const char* labels[8] = {
+    "Buzzer", "Alerts", "WiFi", "Door alert", "Temp min", "Temp max", "Humidity min", "Humidity max"
   };
   tft.setTextDatum(ML_DATUM);
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  for (int i = 0; i < 7; i++)
+  for (int i = 0; i < 8; i++)
     tft.drawString(labels[i], SIDE_PADDING_PX, setRowY(i) + 2 + SET_BTN_H / 2);
 
-  // Rows 0-1 open sub-screens: buzzer (volume/pitch/...) and alerts (expiry/
-  // new-item/temp+humidity range config).
+  // Rows 0-2 open sub-screens: buzzer (volume/pitch/...), alerts (expiry/
+  // new-item/temp+humidity range config) and WiFi (per-board config portal).
   drawBtn(btnSetBuzzer, "Options >", TFT_NAVY);
   drawBtn(btnSetAlerts, "Options >", 0x2945);
+  drawBtn(btnSetWifi,   "Change >",  0x0410);
 
   drawBtn(btnDoorM, "-", TFT_DARKGREY); drawBtn(btnDoorP, "+", TFT_DARKGREY);
   drawBtn(btnTMinM, "-", TFT_DARKGREY); drawBtn(btnTMinP, "+", TFT_DARKGREY);
@@ -337,6 +350,14 @@ void handleSettingsTouch(int x, int y) {
     saveSettings();
     g_notif_settings_prev = VIEW_SETTINGS;
     openNotifSettingsScreen();
+    return;
+  }
+
+  // Row 2 "Change >" opens the WiFi sub-screen (display + per-camera portals).
+  if (inBtn(btnSetWifi, x, y)) {
+    saveSettings();
+    pushSettingsToRTDB();   // the WiFi screen can reboot this board — persist first
+    openWifiScreen();
     return;
   }
 

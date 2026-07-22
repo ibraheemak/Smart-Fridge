@@ -37,6 +37,7 @@
 #include "espnow_link.h"
 #include "buzzer.h"
 #include "settings.h"
+#include "wifi_setup.h"
 #include "liveview.h"
 #include "notifications.h"
 #include "gm65.h"
@@ -262,15 +263,27 @@ void checkResetButton() {
   }
 }
 
-void initWiFi() {
+// forcePortal: the user asked for the config portal from Settings > WiFi and
+// this board rebooted to serve it (see wifi_setup.h). autoConnect() would just
+// silently reconnect with the saved credentials and never show a portal, so
+// take the portal path explicitly.
+void initWiFi(bool forcePortal) {
   showStatus("Connecting WiFi", "AP: " WIFI_AP_NAME);
   WiFiManager wm;
   wm.setConnectTimeout(20);
   wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
   wm.setAPCallback([](WiFiManager*) {
-    showStatus("Setup needed", "Join " WIFI_AP_NAME);
+    showStatus("Join " WIFI_AP_NAME, "Then open http://192.168.4.1");
   });
-  if (!wm.autoConnect(WIFI_AP_NAME)) {
+
+  bool connected;
+  if (forcePortal) {
+    showStatus("Join " WIFI_AP_NAME, "Then open http://192.168.4.1");
+    connected = wm.startConfigPortal(WIFI_AP_NAME);
+  } else {
+    connected = wm.autoConnect(WIFI_AP_NAME);
+  }
+  if (!connected) {
     showStatus("WiFi unavailable", "Will retry...");
     Serial.println("[WIFI] Portal timed out — continuing offline");
   }
@@ -325,7 +338,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   initEspNowLink();
 
-  initWiFi();
+  initWiFi(takeWifiPortalRequest());
   reassertEspNowChannel();  // undo any channel change from WiFiManager's config portal
   configureTime();
   initDoorSensor();
