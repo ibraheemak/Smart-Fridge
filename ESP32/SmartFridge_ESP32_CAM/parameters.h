@@ -124,6 +124,9 @@ static uint8_t CH_MAC_ADDR[6] = { 0xA8, 0x42, 0xE3, 0x46, 0xE0, 0x64 };
 // ----------------------------------------------------------------------------
 // WIFI
 // ----------------------------------------------------------------------------
+// Prefix only — the roof number is appended at runtime (wifiPortalApName() in
+// wifi_portal.h) so each camera's setup AP is distinguishable: roof 1 hosts
+// "SmartFridge_CAM_Setup1", roof 2 "SmartFridge_CAM_Setup2", ...
 #define WIFI_AP_NAME          "SmartFridge_CAM_Setup"
 #define WIFI_PORTAL_TIMEOUT_S 180  // time to join the AP and fill the captive portal form
 #define RESET_BUTTON_PIN        0    // BOOT button — hold at power-on to wipe creds

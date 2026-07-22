@@ -310,6 +310,20 @@ void espnowSendScanTrigger() {
   }
 }
 
+// Asks a single CAM board (1-based roof) to reboot into its WiFi config
+// portal, so the user can move it to a different router from the Settings >
+// WiFi screen instead of reflashing or holding its BOOT button. The camera
+// restarts and hosts an AP for WIFI_PORTAL_TIMEOUT_S — it's offline (and
+// deaf to SCAN_TRIGGER) for that whole window, which is why the screen makes
+// the user confirm rather than firing on a single tap. See wifi_portal.h on
+// the CAM board.
+void espnowSendWifiPortal(int roofIndex1Based) {
+  if (roofIndex1Based < 1 || roofIndex1Based > NUM_ROOFS) return;
+  const char *msg = "WIFI_PORTAL";
+  esp_err_t result = esp_now_send(CAM_MAC_ADDRS[roofIndex1Based - 1], (const uint8_t *)msg, strlen(msg));
+  Serial.printf("[ESPNOW] >> WIFI_PORTAL -> roof%d (%s)\n", roofIndex1Based, result == ESP_OK ? "ok" : "failed");
+}
+
 // Requests a Live View snapshot from a single roof (1-based), unlike
 // espnowSendScanTrigger() which fans out to every roof — Live View only
 // looks at one roof at a time.

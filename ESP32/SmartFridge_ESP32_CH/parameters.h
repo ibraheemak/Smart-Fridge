@@ -66,6 +66,10 @@
 // WIFI / PORTAL
 // ----------------------------------------------------------------------------
 #define WIFI_AP_NAME          "SmartFridge_Display_Setup"
+// Setup-AP name a CAM board hosts, minus the roof number it appends — must
+// stay in sync with WIFI_AP_NAME in the CAM sketch's parameters.h. Used by
+// Settings > WiFi to tell the user which AP to join (see wifi_setup.h).
+#define CAM_WIFI_AP_PREFIX    "SmartFridge_CAM_Setup"
 #define WIFI_PORTAL_TIMEOUT_S      180
 #define WIFI_RECONNECT_INTERVAL_MS 30000  // retry WiFi.begin() this often while offline
 #define RESET_BUTTON_PIN        0  // BOOT button — hold at power-on to wipe creds

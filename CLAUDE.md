@@ -71,6 +71,15 @@ CAM roof1  (unicast, "TEMP:<c>,<h>") ───► CH board
   in CAM's `parameters.h`) so the display updates instantly instead of
   waiting on a timer.
 
+- **CH → CAM (WiFi config portal)**: Settings > WiFi on the display
+  (`wifi_setup.h`) lists the display and every camera. Picking a camera and
+  confirming unicasts `"WIFI_PORTAL"` to that roof; the CAM board persists a
+  one-shot NVS flag (`wifi_portal.h`) and reboots into WiFiManager's config
+  portal, hosting `SmartFridge_CAM_Setup<roof>` at `http://192.168.4.1` for
+  `WIFI_PORTAL_TIMEOUT_S`. Picking "Display" does the same flag+reboot locally
+  (`SmartFridge_Display_Setup`). ESP-NOW is the right transport here precisely
+  because the board being re-pointed may have no working router connection.
+
 Both boards pin their WiFi radio to a fixed `ESPNOW_CHANNEL` (default 1, set
 in `parameters.h` on both boards) **before** trying to join the router.
 Reason: ESP-NOW only needs both radios on the same channel — it works with no

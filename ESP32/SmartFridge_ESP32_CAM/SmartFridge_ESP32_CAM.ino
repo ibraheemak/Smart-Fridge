@@ -29,6 +29,7 @@
 #include "gemini.h"
 #include "led_strip.h"
 #include "espnow_link.h"
+#include "wifi_portal.h"
 #include "liveview_rtdb.h"
 #include "temperature.h"
 #include "offline_buffer.h"
@@ -62,15 +63,28 @@ void checkResetButton() {
   }
 }
 
-void initWiFi() {
+// forcePortal: this boot follows a "change my WiFi" request from the CH board
+// (see wifi_portal.h) — host the config portal instead of silently reconnecting
+// to the credentials already on file, which is the whole point of the request.
+void initWiFi(bool forcePortal) {
   Serial.println("[WIFI] Connecting...");
+  String ap = wifiPortalApName();
   WiFiManager wm;
   wm.setConnectTimeout(20);
   wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
-  wm.setAPCallback([](WiFiManager*) {
-    Serial.printf("[WIFI] Open AP \"%s\" -> http://192.168.4.1\n", WIFI_AP_NAME);
+  wm.setAPCallback([](WiFiManager* m) {
+    Serial.printf("[WIFI] Open AP \"%s\" -> http://192.168.4.1\n",
+                  m->getConfigPortalSSID().c_str());
   });
-  if (!wm.autoConnect(WIFI_AP_NAME)) {
+
+  bool connected;
+  if (forcePortal) {
+    Serial.printf("[WIFI] Setup mode — join \"%s\" -> http://192.168.4.1\n", ap.c_str());
+    connected = wm.startConfigPortal(ap.c_str());
+  } else {
+    connected = wm.autoConnect(ap.c_str());
+  }
+  if (!connected) {
     Serial.println("[WIFI] Portal timed out — continuing offline");
   }
 
@@ -176,6 +190,7 @@ void printHelp() {
 #endif
   Serial.println("STATUS    — System status");
   Serial.println("WIFIRESET — Wipe WiFi credentials");
+  Serial.println("WIFISETUP — Reboot into the WiFi config portal");
   Serial.println("HELP      — This menu");
   Serial.println("========================================\n");
 }
@@ -194,6 +209,7 @@ void processSerialCommand(String cmd) {
                   WiFi.localIP().toString().c_str(),
                   (unsigned)ESP.getFreeHeap());
   else if (cmd == "WIFIRESET") { WiFiManager wm; wm.resetSettings(); ESP.restart(); }
+  else if (cmd == "WIFISETUP") rebootIntoWifiPortal();
   else if (cmd == "HELP")      printHelp();
   else if (cmd.length() > 0)   Serial.printf("[CMD] Unknown: %s\n", cmd.c_str());
 }
@@ -217,7 +233,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   initEspNowLink();
 
-  initWiFi();
+  initWiFi(takeWifiPortalRequest());
   reassertEspNowChannel();  // undo any channel change from WiFiManager's config portal
   configureTime();
 
@@ -271,6 +287,13 @@ void loop() {
     // back for camera priority. Sent after captureAndProcess() returns so it
     // covers every exit path (success or an early capture/WiFi/Gemini bail).
     espnowSendScanDone();
+  }
+
+  // CH board's Settings > WiFi screen asked this camera to open its config
+  // portal — reboot into it (never returns).
+  if (espnowWifiPortalRequested()) {
+    Serial.println("[ESPNOW] WIFI_PORTAL received");
+    rebootIntoWifiPortal();
   }
 
   if (espnowLiveViewRequested()) {
